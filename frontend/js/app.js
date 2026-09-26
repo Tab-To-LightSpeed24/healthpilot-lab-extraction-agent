@@ -1,7 +1,13 @@
 const API_BASE_KEY = "healthpilot_api_base";
+// Defaults to the live deployed backend so anyone opening the Vercel URL
+// cold (a recruiter, e.g.) sees working data immediately, with no manual
+// setup step. localhost:8000 is still useful for local dev -- just paste it
+// into the "Backend URL" box and Save, which persists in localStorage and
+// overrides this default from then on for that browser.
+const DEFAULT_API_BASE = "https://healthpilot-api-2b2m.onrender.com";
 
 function getApiBase() {
-  return localStorage.getItem(API_BASE_KEY) || "http://localhost:8000";
+  return localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE;
 }
 
 function setApiBase(url) {
