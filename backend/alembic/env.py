@@ -69,10 +69,26 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
-    In this scenario we need to create an Engine
-    and associate a connection with the context.
-
+    If the caller (app.core.migrate.run_migrations) already handed us a live
+    Connection via config.attributes, reuse it directly. This matters
+    because building a brand new Engine here from a URL re-serialized
+    through `str(engine.url)` and round-tripped through ConfigParser is a
+    second, independent connection path that has never been exercised
+    against the real production database until a migration actually runs --
+    and if Render's auto-generated Postgres password contains characters
+    that don't survive that round-trip cleanly, this is exactly where it
+    would silently break. Reusing the same connection the rest of the app
+    already uses successfully avoids that whole class of failure. Only fall
+    back to building a fresh Engine here for the plain-CLI case (running
+    `alembic upgrade head` directly from a terminal).
     """
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

@@ -12,15 +12,30 @@ from app.services.loinc_loader import seed_loinc_table
 from app.services.worker import start_worker
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    run_migrations(engine)
+    # Deliberately explicit try/except with logger.exception (full traceback)
+    # around startup, rather than trusting the default lifespan error
+    # handling to surface it -- a real deploy once failed here with a bare
+    # "Exited with status 3" and no traceback at all in the logs, which made
+    # diagnosing it needlessly hard. This guarantees the next failure, if
+    # any, is actually diagnosable from the logs alone.
+    try:
+        run_migrations(engine)
+    except Exception:
+        logger.exception("Database migration failed during startup")
+        raise
+
     db = SessionLocal()
     try:
         count = seed_loinc_table(db)
         logging.info("LOINC reference table ready: %s codes", count)
+    except Exception:
+        logger.exception("LOINC table seeding failed during startup")
+        raise
     finally:
         db.close()
 

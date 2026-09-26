@@ -38,12 +38,19 @@ def run_migrations(engine: Engine) -> None:
     table_names = set(inspector.get_table_names())
     cfg = _alembic_config(engine)
 
-    if "alembic_version" not in table_names and "documents" in table_names:
-        logger.info(
-            "Pre-existing database with no migration history found; "
-            "stamping at %s before upgrading.",
-            PRE_ALEMBIC_BASELINE_REVISION,
-        )
-        command.stamp(cfg, PRE_ALEMBIC_BASELINE_REVISION)
+    # Reuse a connection from the engine the rest of the app already
+    # connects with successfully, rather than having Alembic build a second,
+    # independent connection from a re-serialized URL string -- see
+    # alembic/env.py's run_migrations_online() for why that matters.
+    with engine.connect() as connection:
+        cfg.attributes["connection"] = connection
 
-    command.upgrade(cfg, "head")
+        if "alembic_version" not in table_names and "documents" in table_names:
+            logger.info(
+                "Pre-existing database with no migration history found; "
+                "stamping at %s before upgrading.",
+                PRE_ALEMBIC_BASELINE_REVISION,
+            )
+            command.stamp(cfg, PRE_ALEMBIC_BASELINE_REVISION)
+
+        command.upgrade(cfg, "head")
