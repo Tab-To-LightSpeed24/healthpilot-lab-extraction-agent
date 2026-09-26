@@ -1,25 +1,16 @@
-const API_BASE_KEY = "healthpilot_api_base";
-// Defaults to the live deployed backend so anyone opening the Vercel URL
-// cold (a recruiter, e.g.) sees working data immediately, with no manual
-// setup step. localhost:8000 is still useful for local dev -- just paste it
-// into the "Backend URL" box and Save, which persists in localStorage and
-// overrides this default from then on for that browser.
-const DEFAULT_API_BASE = "https://healthpilot-api-2b2m.onrender.com";
+// No visible config UI -- the right backend is decided from where this page
+// itself is being served, not typed in by whoever opens the site. Serving
+// the frontend from a local dev server (127.0.0.1/localhost, any port)
+// talks to the local backend; anywhere else (the deployed Vercel URL) talks
+// to the live Render backend. A recruiter opening the deployed link sees
+// working data immediately, with nothing to configure.
+const LOCAL_API_BASE = "http://localhost:8000";
+const DEPLOYED_API_BASE = "https://healthpilot-api-2b2m.onrender.com";
+const IS_LOCAL_HOST = ["localhost", "127.0.0.1"].includes(window.location.hostname);
 
 function getApiBase() {
-  return localStorage.getItem(API_BASE_KEY) || DEFAULT_API_BASE;
+  return IS_LOCAL_HOST ? LOCAL_API_BASE : DEPLOYED_API_BASE;
 }
-
-function setApiBase(url) {
-  localStorage.setItem(API_BASE_KEY, url.replace(/\/$/, ""));
-}
-
-const apiBaseInput = document.getElementById("apiBaseInput");
-apiBaseInput.value = getApiBase();
-document.getElementById("saveApiBase").addEventListener("click", () => {
-  setApiBase(apiBaseInput.value.trim());
-  loadReports();
-});
 
 const uploadForm = document.getElementById("uploadForm");
 const uploadBtn = document.getElementById("uploadBtn");
