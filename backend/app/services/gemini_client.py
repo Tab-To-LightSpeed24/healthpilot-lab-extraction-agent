@@ -3,7 +3,7 @@ import logging
 from typing import List, Optional
 
 import google.generativeai as genai
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_not_exception_type, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 from app.schemas.extraction import EXTRACTION_JSON_SCHEMA, PageExtractionResult
@@ -12,16 +12,33 @@ logger = logging.getLogger(__name__)
 
 _configured = False
 
+# Config errors (e.g. missing API key) will never succeed on retry, so they
+# must not be wrapped by the @retry decorators below -- only transient
+# network/API errors should be retried.
+class ConfigurationError(RuntimeError):
+    pass
+
 
 def _ensure_configured():
     global _configured
     if not _configured:
         if not settings.gemini_api_key:
-            raise RuntimeError(
+            raise ConfigurationError(
                 "GEMINI_API_KEY is not set. Add it to backend/.env before processing documents."
             )
         genai.configure(api_key=settings.gemini_api_key)
         _configured = True
+
+
+# Only transient network/API errors should be retried -- ConfigurationError
+# (missing key) and ValueError (caller passed invalid input, e.g. no image
+# and no text layer) are programmer/config errors that will never succeed on
+# retry, so retrying them just adds latency for no benefit.
+_retry_transient = retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=2, min=2, max=20),
+    retry=retry_if_not_exception_type((ConfigurationError, ValueError)),
+)
 
 
 EXTRACTION_PROMPT = """You are a clinical laboratory data extraction system.
@@ -54,17 +71,22 @@ Return ONLY the JSON object matching the required schema.
 """
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=20))
+@_retry_transient
 def extract_page(image_png: bytes, text_layer: Optional[str]) -> PageExtractionResult:
     _ensure_configured()
     model = genai.GenerativeModel(settings.gemini_model)
     prompt = EXTRACTION_PROMPT.format(text_layer=text_layer or "(no text layer available)")
 
+    # Plain-text reports have no rasterized page (image_png is empty) -- send
+    # a text-only request rather than an invalid empty image part.
+    contents = [prompt]
+    if image_png:
+        contents.append({"mime_type": "image/png", "data": image_png})
+    elif not text_layer:
+        raise ValueError("extract_page called with neither an image nor a text layer")
+
     response = model.generate_content(
-        [
-            prompt,
-            {"mime_type": "image/png", "data": image_png},
-        ],
+        contents,
         generation_config={
             "response_mime_type": "application/json",
             "response_schema": EXTRACTION_JSON_SCHEMA,
@@ -101,7 +123,7 @@ Respond with ONLY a JSON object of the form:
 """
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=20))
+@_retry_transient
 def verify_mapping(
     original_name: str,
     normalized_name: str,
@@ -138,7 +160,7 @@ def verify_mapping(
     return json.loads(response.text)
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2, min=2, max=20))
+@_retry_transient
 def embed_text(text: str) -> List[float]:
     _ensure_configured()
     result = genai.embed_content(model=settings.gemini_embedding_model, content=text)

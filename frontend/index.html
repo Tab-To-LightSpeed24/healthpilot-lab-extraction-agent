@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HealthPilot &mdash; AI Lab Extraction &amp; LOINC Coding Agent</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  .badge-confirmed { background:#dcfce7; color:#166534; }
+  .badge-needs_review { background:#fef9c3; color:#854d0e; }
+  .badge-unmapped { background:#fee2e2; color:#991b1b; }
+  .badge-pending { background:#e5e7eb; color:#374151; }
+  .badge-processing { background:#dbeafe; color:#1e40af; }
+  .badge-complete { background:#dcfce7; color:#166534; }
+  .badge-failed { background:#fee2e2; color:#991b1b; }
+</style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+
+<header class="bg-white border-b border-slate-200">
+  <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+    <div>
+      <h1 class="text-xl font-semibold">HealthPilot AI Lab Extraction &amp; LOINC Coding Agent</h1>
+      <p class="text-sm text-slate-500">Upload a lab report &rarr; extraction &rarr; normalization &rarr; LOINC mapping &rarr; structured storage</p>
+    </div>
+    <div class="flex items-center gap-2">
+      <input id="apiBaseInput" type="text" placeholder="Backend API URL (e.g. https://healthpilot-api.onrender.com)"
+        class="text-xs border border-slate-300 rounded px-2 py-1 w-80" />
+      <button id="saveApiBase" class="text-xs bg-slate-700 text-white px-3 py-1.5 rounded hover:bg-slate-800">Save</button>
+    </div>
+  </div>
+</header>
+
+<main class="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+  <section class="lg:col-span-1 space-y-4">
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+      <h2 class="font-medium mb-2">Upload a report</h2>
+      <form id="uploadForm" class="space-y-3">
+        <input id="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt"
+          class="block w-full text-sm border border-slate-300 rounded p-2" required />
+        <button type="submit" id="uploadBtn"
+          class="w-full bg-indigo-600 text-white rounded py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
+          Upload &amp; Process
+        </button>
+      </form>
+      <p id="uploadStatus" class="text-xs text-slate-500 mt-2"></p>
+    </div>
+
+    <div class="bg-white rounded-lg border border-slate-200 p-4">
+      <h2 class="font-medium mb-2">Reports</h2>
+      <div id="reportsList" class="space-y-1 max-h-[60vh] overflow-y-auto text-sm"></div>
+    </div>
+  </section>
+
+  <section class="lg:col-span-2">
+    <div class="bg-white rounded-lg border border-slate-200 p-4 min-h-[300px]">
+      <div id="detailEmpty" class="text-slate-400 text-sm">Select a report to view extracted observations.</div>
+      <div id="detailContent" class="hidden">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 id="detailFilename" class="font-medium"></h2>
+            <p id="detailMeta" class="text-xs text-slate-500"></p>
+          </div>
+          <span id="detailStatusBadge" class="text-xs px-2 py-1 rounded font-medium"></span>
+        </div>
+        <div class="flex gap-2 mb-3 text-xs">
+          <span class="px-2 py-1 rounded badge-confirmed">Confirmed</span>
+          <span class="px-2 py-1 rounded badge-needs_review">Needs Review</span>
+          <span class="px-2 py-1 rounded badge-unmapped">Unmapped</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm border-collapse">
+            <thead>
+              <tr class="text-left text-slate-500 border-b border-slate-200">
+                <th class="py-2 pr-2">Original Name</th>
+                <th class="py-2 pr-2">Normalized</th>
+                <th class="py-2 pr-2">Value</th>
+                <th class="py-2 pr-2">Unit</th>
+                <th class="py-2 pr-2">Ref. Range</th>
+                <th class="py-2 pr-2">Specimen</th>
+                <th class="py-2 pr-2">LOINC</th>
+                <th class="py-2 pr-2">LOINC Display</th>
+                <th class="py-2 pr-2">Mapping</th>
+                <th class="py-2 pr-2">Conf.</th>
+                <th class="py-2 pr-2">Page</th>
+              </tr>
+            </thead>
+            <tbody id="observationsBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-white rounded-lg border border-slate-200 p-4 mt-6">
+      <h2 class="font-medium mb-2">LOINC Terminology Search</h2>
+      <input id="loincSearchInput" type="text" placeholder="Search e.g. 'glucose', 'TSH', '2345-7'"
+        class="w-full border border-slate-300 rounded px-3 py-2 text-sm mb-2" />
+      <div id="loincSearchResults" class="text-sm space-y-1 max-h-64 overflow-y-auto"></div>
+    </div>
+  </section>
+
+</main>
+
+<script src="js/app.js"></script>
+</body>
+</html>

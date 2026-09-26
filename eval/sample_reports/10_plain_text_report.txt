@@ -1,0 +1,4 @@
+Iron Studies Panel
+Iron        70    ug/dL    50-170
+Ferritin    120   ng/mL    20-250
+TIBC        300   ug/dL    250-450

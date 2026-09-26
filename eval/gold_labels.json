@@ -1,0 +1,326 @@
+[
+  {
+    "file": "01_cbc_clean_digital.pdf",
+    "format": "digital_pdf",
+    "quality": "clean",
+    "expected": [
+      {
+        "original_test_name": "WBC",
+        "value": "6.8",
+        "unit": "10*3/uL",
+        "loinc_code": "6690-2"
+      },
+      {
+        "original_test_name": "RBC",
+        "value": "4.7",
+        "unit": "10*6/uL",
+        "loinc_code": "789-8"
+      },
+      {
+        "original_test_name": "Hemoglobin",
+        "value": "13.9",
+        "unit": "g/dL",
+        "loinc_code": "718-7"
+      },
+      {
+        "original_test_name": "Hematocrit",
+        "value": "41.2",
+        "unit": "%",
+        "loinc_code": "4544-3"
+      },
+      {
+        "original_test_name": "Platelet Count",
+        "value": "250",
+        "unit": "10*3/uL",
+        "loinc_code": "777-3"
+      }
+    ]
+  },
+  {
+    "file": "02_cmp_clean_digital.pdf",
+    "format": "digital_pdf",
+    "quality": "clean",
+    "expected": [
+      {
+        "original_test_name": "Sodium",
+        "value": "140",
+        "unit": "mmol/L",
+        "loinc_code": "2951-2"
+      },
+      {
+        "original_test_name": "Potassium",
+        "value": "4.1",
+        "unit": "mmol/L",
+        "loinc_code": "2823-3"
+      },
+      {
+        "original_test_name": "Chloride",
+        "value": "101",
+        "unit": "mmol/L",
+        "loinc_code": "2075-0"
+      },
+      {
+        "original_test_name": "CO2",
+        "value": "25",
+        "unit": "mmol/L",
+        "loinc_code": "2028-9"
+      },
+      {
+        "original_test_name": "BUN",
+        "value": "15",
+        "unit": "mg/dL",
+        "loinc_code": "3094-0"
+      },
+      {
+        "original_test_name": "Creatinine",
+        "value": "0.9",
+        "unit": "mg/dL",
+        "loinc_code": "2160-0"
+      },
+      {
+        "original_test_name": "Glucose",
+        "value": "98",
+        "unit": "mg/dL",
+        "loinc_code": "2345-7"
+      }
+    ]
+  },
+  {
+    "file": "03_lipid_messy_layout.pdf",
+    "format": "digital_pdf",
+    "quality": "messy_layout",
+    "expected": [
+      {
+        "original_test_name": "Total Cholesterol",
+        "value": "210",
+        "unit": "mg/dL",
+        "loinc_code": "2093-3"
+      },
+      {
+        "original_test_name": "HDL Cholesterol",
+        "value": "45",
+        "unit": "mg/dL",
+        "loinc_code": "2085-9"
+      },
+      {
+        "original_test_name": "LDL Cholesterol (calc)",
+        "value": "140",
+        "unit": "mg/dL",
+        "loinc_code": "13457-7"
+      },
+      {
+        "original_test_name": "Triglycerides",
+        "value": "130",
+        "unit": "mg/dL",
+        "loinc_code": "2571-8"
+      }
+    ]
+  },
+  {
+    "file": "04_synonyms_abbreviations.pdf",
+    "format": "digital_pdf",
+    "quality": "clean",
+    "expected": [
+      {
+        "original_test_name": "Sugar (Fasting)",
+        "value": "95",
+        "unit": "mg/dL",
+        "loinc_code": "2345-7"
+      },
+      {
+        "original_test_name": "SGOT",
+        "value": "22",
+        "unit": "U/L",
+        "loinc_code": "1920-8"
+      },
+      {
+        "original_test_name": "SGPT",
+        "value": "18",
+        "unit": "U/L",
+        "loinc_code": "1742-6"
+      },
+      {
+        "original_test_name": "A1C",
+        "value": "5.4",
+        "unit": "%",
+        "loinc_code": "4548-4"
+      },
+      {
+        "original_test_name": "Na+",
+        "value": "138",
+        "unit": "mmol/L",
+        "loinc_code": "2951-2"
+      }
+    ]
+  },
+  {
+    "file": "05_thyroid_partial_fields.pdf",
+    "format": "digital_pdf",
+    "quality": "partial_fields",
+    "expected": [
+      {
+        "original_test_name": "TSH",
+        "value": "2.1",
+        "unit": "uIU/mL",
+        "loinc_code": "3016-3"
+      },
+      {
+        "original_test_name": "Free T4",
+        "value": "Normal",
+        "unit": null,
+        "loinc_code": "3024-7"
+      },
+      {
+        "original_test_name": "Free T3",
+        "value": "3.1",
+        "unit": "pg/mL",
+        "loinc_code": "3053-6"
+      }
+    ]
+  },
+  {
+    "file": "06_urinalysis.pdf",
+    "format": "digital_pdf",
+    "quality": "clean",
+    "expected": [
+      {
+        "original_test_name": "Specific Gravity",
+        "value": "1.020",
+        "unit": null,
+        "loinc_code": "5811-5"
+      },
+      {
+        "original_test_name": "pH",
+        "value": "6.0",
+        "unit": null,
+        "loinc_code": "5803-2"
+      },
+      {
+        "original_test_name": "Protein",
+        "value": "Negative",
+        "unit": null,
+        "loinc_code": "5804-0"
+      },
+      {
+        "original_test_name": "Glucose",
+        "value": "Negative",
+        "unit": null,
+        "loinc_code": "5792-7"
+      },
+      {
+        "original_test_name": "Leukocyte Esterase",
+        "value": "Negative",
+        "unit": null,
+        "loinc_code": "5799-2"
+      }
+    ]
+  },
+  {
+    "file": "07_multipage_panel.pdf",
+    "format": "digital_pdf",
+    "quality": "multipage",
+    "expected": [
+      {
+        "original_test_name": "WBC",
+        "value": "7.2",
+        "unit": "10*3/uL",
+        "loinc_code": "6690-2",
+        "page_number": 1
+      },
+      {
+        "original_test_name": "Hemoglobin",
+        "value": "14.1",
+        "unit": "g/dL",
+        "loinc_code": "718-7",
+        "page_number": 1
+      },
+      {
+        "original_test_name": "Glucose",
+        "value": "101",
+        "unit": "mg/dL",
+        "loinc_code": "2345-7",
+        "page_number": 2
+      },
+      {
+        "original_test_name": "Creatinine",
+        "value": "1.0",
+        "unit": "mg/dL",
+        "loinc_code": "2160-0",
+        "page_number": 2
+      }
+    ]
+  },
+  {
+    "file": "08_unmapped_novel_test.pdf",
+    "format": "digital_pdf",
+    "quality": "clean",
+    "expected": [
+      {
+        "original_test_name": "Glucose",
+        "value": "92",
+        "unit": "mg/dL",
+        "loinc_code": "2345-7"
+      },
+      {
+        "original_test_name": "Interleukin-6 (IL-6)",
+        "value": "3.2",
+        "unit": "pg/mL",
+        "loinc_code": null,
+        "expect_mapping_status_in": [
+          "needs_review",
+          "unmapped"
+        ]
+      }
+    ]
+  },
+  {
+    "file": "09_coag_scanned_image.png",
+    "format": "image_png",
+    "quality": "scanned_simulated",
+    "expected": [
+      {
+        "original_test_name": "PT",
+        "value": "13.2",
+        "unit": "sec",
+        "loinc_code": "5902-2"
+      },
+      {
+        "original_test_name": "INR",
+        "value": "1.0",
+        "unit": null,
+        "loinc_code": "6301-6"
+      },
+      {
+        "original_test_name": "aPTT",
+        "value": "29.0",
+        "unit": "sec",
+        "loinc_code": "14979-9"
+      }
+    ]
+  },
+  {
+    "file": "10_plain_text_report.txt",
+    "format": "text_plain",
+    "quality": "clean",
+    "expected": [
+      {
+        "original_test_name": "Iron",
+        "value": "70",
+        "unit": "ug/dL",
+        "loinc_code": "2498-4"
+      },
+      {
+        "original_test_name": "Ferritin",
+        "value": "120",
+        "unit": "ng/mL",
+        "loinc_code": "2276-4"
+      },
+      {
+        "original_test_name": "TIBC",
+        "value": "300",
+        "unit": "ug/dL",
+        "loinc_code": "2500-7"
+      }
+    ]
+  }
+]
