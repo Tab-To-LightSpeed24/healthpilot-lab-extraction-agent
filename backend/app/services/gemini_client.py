@@ -167,14 +167,3 @@ def verify_mapping(
         },
     )
     return json.loads(response.text)
-
-
-@_retry_transient
-def embed_text(text: str) -> List[float]:
-    _ensure_configured()
-    result = genai.embed_content(model=settings.gemini_embedding_model, content=text)
-    return result["embedding"]
-
-
-def embed_texts_batch(texts: List[str]) -> List[List[float]]:
-    return [embed_text(t) for t in texts]

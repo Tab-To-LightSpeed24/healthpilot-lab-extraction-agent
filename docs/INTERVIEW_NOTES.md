@@ -262,6 +262,24 @@ No test in this repo claims a result it didn't actually produce.
   missed synonym — i.e., the eval caught real, fixable issues rather than
   rubber-stamping a pass.
 
+## 6b. Added after the initial build: FHIR Observation output
+
+Originally scoped out (see §2/§8) as lower priority than a correct, tested
+core pipeline. Added afterward once the core was live and evaluated, as a
+pure transform layer (`app/services/fhir_export.py`,
+`GET /reports/{id}/fhir`) over `Observation` rows that were *already*
+mapped by the 3-stage pipeline — it reads already-resolved data and
+reformats it into an HL7 FHIR R4 `Bundle`, so it cannot introduce a new
+mapping error, only a serialization bug (which is exactly the class of bug
+its own tests target: e.g. a value like `"<0.1"` must become a
+`valueString`, never be silently truncated into a bare, misleading
+`valueQuantity` of `0.1`). Mapping status/confidence ride along as FHIR
+`extension` entries so an `unmapped` observation still exports honestly
+(no invented LOINC coding) instead of being dropped or faked. This is a good
+example to bring up if asked "what did you add after the first working
+version" — it shows iterating on a live system rather than a single
+one-shot build.
+
 ## 7. Known limitations (say these proactively, don't wait to be asked)
 
 - Curated ~65-code LOINC subset, not the full official table (needs a

@@ -7,7 +7,6 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./healthpilot.db"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
-    gemini_embedding_model: str = "models/text-embedding-004"
     mapping_confidence_threshold: float = 0.75
     # Comma-separated string, not list[str]: pydantic-settings JSON-decodes
     # env vars for complex/list-typed fields, which breaks on a plain value

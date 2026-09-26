@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
@@ -7,14 +8,33 @@ from app.models.document import Document, DocumentStatus
 from app.models.observation import Observation, MappingStatus
 from app.services import pdf_utils, gemini_client, loinc_mapping
 from app.services.loinc_loader import get_alias_index
+from app.services.normalization import standardize_unit
 
 logger = logging.getLogger(__name__)
 
 
-def process_document(document_id: str) -> None:
-    """Runs synchronously in a background task/thread. Owns its own DB session
-    since it may outlive the request that triggered it."""
-    db: Session = SessionLocal()
+def _is_cancel_requested(db: Session, document_id: str) -> bool:
+    """Re-reads just the cancel flag (not the whole ORM object) so a
+    cooperative check between pages sees a cancellation requested by a
+    different request/session, not a stale in-memory copy."""
+    return bool(
+        db.query(Document.cancel_requested).filter(Document.id == document_id).scalar()
+    )
+
+
+def _touch(db: Session, doc: Document) -> None:
+    """Heartbeat: lets the worker's stuck-job sweep tell 'still actively
+    being processed' apart from 'crashed mid-job and never came back'."""
+    doc.updated_at = datetime.now(timezone.utc)
+    db.commit()
+
+
+def process_document(document_id: str, db: Session | None = None) -> None:
+    """Extracts + maps every page of a document. Runs on the worker thread
+    (see app/services/worker.py) and owns its own DB session unless one is
+    passed in (tests, or a caller that wants transactional control)."""
+    owns_session = db is None
+    db = db or SessionLocal()
     try:
         doc = db.query(Document).filter(Document.id == document_id).first()
         if doc is None:
@@ -22,17 +42,27 @@ def process_document(document_id: str) -> None:
             return
 
         doc.status = DocumentStatus.processing
-        db.commit()
+        _touch(db, doc)
 
         pages = pdf_utils.load_pages(doc.raw_content, doc.content_type)
         doc.num_pages = len(pages)
-        db.commit()
+        _touch(db, doc)
 
         alias_index = get_alias_index()
         any_failure = False
         failure_reasons: list[str] = []
+        pages_completed = 0
 
         for page in pages:
+            if _is_cancel_requested(db, document_id):
+                doc.status = DocumentStatus.cancelled
+                doc.error_message = (
+                    f"Cancelled after {pages_completed}/{len(pages)} page(s) by user request."
+                )
+                db.commit()
+                logger.info("Document %s cancelled after %s pages", document_id, pages_completed)
+                return
+
             try:
                 result = gemini_client.extract_page(page.image_png, page.text)
             except Exception as exc:
@@ -41,6 +71,7 @@ def process_document(document_id: str) -> None:
                 )
                 any_failure = True
                 failure_reasons.append(f"page {page.page_number}: {exc}")
+                pages_completed += 1
                 continue
 
             for test in result.tests:
@@ -75,7 +106,7 @@ def process_document(document_id: str) -> None:
                     original_test_name=test.original_test_name,
                     normalized_test_name=mapping["normalized_test_name"],
                     value=test.value,
-                    unit=test.unit,
+                    unit=standardize_unit(test.unit),
                     reference_range=test.reference_range,
                     specimen=test.specimen,
                     method=test.method,
@@ -91,7 +122,8 @@ def process_document(document_id: str) -> None:
                     raw_extraction=test.model_dump(),
                 )
                 db.add(obs)
-            db.commit()
+            pages_completed += 1
+            _touch(db, doc)
 
         doc.status = DocumentStatus.failed if any_failure and not doc.observations else DocumentStatus.complete
         if any_failure:
@@ -110,4 +142,5 @@ def process_document(document_id: str) -> None:
             doc.error_message = str(exc)
             db.commit()
     finally:
-        db.close()
+        if owns_session:
+            db.close()

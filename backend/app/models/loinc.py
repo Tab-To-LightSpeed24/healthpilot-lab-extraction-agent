@@ -18,6 +18,12 @@ class LoincCode(Base):
     method_type = Column(String(128), nullable=True)
     class_ = Column("class", String(128), nullable=True)
     example_units = Column(String(128), nullable=True)
+    # LOINC's own "how often this is actually ordered" signal (0 = unranked).
+    # Used only as a tiebreaker to surface commonly-used tests over obscure
+    # ones within an already lexically-relevant candidate shortlist -- NOT
+    # to override a specific alias match (see normalization.build_alias_index
+    # for why that specific use was tried and reverted).
+    common_test_rank = Column(Integer, nullable=False, default=0)
 
     aliases = relationship(
         "LoincAlias", back_populates="loinc_code", cascade="all, delete-orphan"

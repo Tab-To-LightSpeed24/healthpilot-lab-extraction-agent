@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class ObservationOut(BaseModel):
@@ -40,8 +40,42 @@ class DocumentOut(BaseModel):
     error_message: Optional[str]
 
 
+class QualitySummary(BaseModel):
+    total_observations: int
+    confirmed_count: int
+    needs_review_count: int
+    unmapped_count: int
+    review_needed_ratio: Optional[float]
+    possible_duplicate_test_names: List[str]
+    low_confidence_extractions: List[dict]
+
+
 class DocumentDetailOut(DocumentOut):
     observations: List[ObservationOut] = []
+    quality: Optional[QualitySummary] = None
+
+
+class ObservationReviewIn(BaseModel):
+    """Human-in-the-loop correction of a needs_review/unmapped observation.
+
+    `loinc_code=None` with `mapping_status="unmapped"` is how a reviewer
+    records "I looked, and there genuinely is no correct LOINC code" as a
+    deliberate, confirmed decision -- distinct from the system never having
+    found one. Any other combination requires a real LOINC code (validated
+    server-side against the reference table -- this endpoint cannot be used
+    to fabricate a code any more than the automated pipeline can).
+    """
+
+    loinc_code: Optional[str] = None
+    mapping_status: str = "confirmed"
+
+    @field_validator("mapping_status")
+    @classmethod
+    def _validate_status(cls, v: str) -> str:
+        allowed = {"confirmed", "needs_review", "unmapped"}
+        if v not in allowed:
+            raise ValueError(f"mapping_status must be one of {sorted(allowed)}")
+        return v
 
 
 class LoincSearchResult(BaseModel):

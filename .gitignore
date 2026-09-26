@@ -6,3 +6,12 @@ __pycache__/
 .pytest_cache/
 node_modules/
 .DS_Store
+
+# Raw official LOINC release (~1GB, downloaded from loinc.org under your own
+# license acceptance) -- never commit this. Only backend/app/data/
+# loinc_lab_active.csv (derived from it by scripts/build_loinc_data.py) is
+# checked in.
+/Loinc_2.83/
+
+# Separate project of yours, not part of this submission
+/medical data pipeline project/

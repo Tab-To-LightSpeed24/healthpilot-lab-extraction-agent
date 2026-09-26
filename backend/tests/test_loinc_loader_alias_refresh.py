@@ -2,7 +2,7 @@
 was mis-mapped to the serum Glucose LOINC code partly because a colloquial
 synonym ("Sugar (Fasting)") wasn't in the alias table, and seed_loinc_table
 originally skipped alias refresh entirely once the LoincCode rows existed --
-so editing app/data/loinc_subset.json to add a synonym had no effect on an
+so editing app/data/loinc_lab_active.csv to add a synonym had no effect on an
 already-seeded (e.g. already-deployed) database."""
 from unittest.mock import patch
 
@@ -22,6 +22,6 @@ def test_reseeding_refreshes_aliases_even_when_codes_already_exist(db_session):
 
     aliases = {a.alias for a in db_session.query(LoincAlias).filter(LoincAlias.loinc_num == "2345-7").all()}
     assert "Totally New Synonym" in aliases, (
-        "a new alias added to loinc_subset.json must take effect on the next "
+        "a new alias added to loinc_lab_active.csv must take effect on the next "
         "deploy even though the LoincCode rows were already seeded"
     )

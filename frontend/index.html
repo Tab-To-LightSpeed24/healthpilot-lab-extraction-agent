@@ -3,104 +3,149 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>HealthPilot &mdash; AI Lab Extraction &amp; LOINC Coding Agent</title>
+<title>HealthPilot &mdash; Lab Extraction &amp; LOINC Coding</title>
 <script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
-  .badge-confirmed { background:#dcfce7; color:#166534; }
-  .badge-needs_review { background:#fef9c3; color:#854d0e; }
-  .badge-unmapped { background:#fee2e2; color:#991b1b; }
-  .badge-pending { background:#e5e7eb; color:#374151; }
-  .badge-processing { background:#dbeafe; color:#1e40af; }
-  .badge-complete { background:#dcfce7; color:#166534; }
-  .badge-failed { background:#fee2e2; color:#991b1b; }
+  :root {
+    --ink: #14231f;
+    --paper: #f6f5f1;
+  }
+  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; background: var(--paper); color: var(--ink); }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+
+  .status-pill { display:inline-flex; align-items:center; gap:.35rem; font-weight:600; }
+  .status-pill::before { content:''; width:6px; height:6px; border-radius:999px; display:inline-block; }
+
+  .pill-confirmed { background:#e8f5ef; color:#0f6b45; }
+  .pill-confirmed::before { background:#16a34a; }
+  .pill-needs_review { background:#fdf3e2; color:#92600a; }
+  .pill-needs_review::before { background:#d97706; }
+  .pill-unmapped { background:#fbe9ea; color:#9f1d2b; }
+  .pill-unmapped::before { background:#dc2626; }
+
+  .pill-pending { background:#eceae3; color:#57534e; }
+  .pill-pending::before { background:#a8a29e; }
+  .pill-processing { background:#e6f0f7; color:#155e8a; }
+  .pill-processing::before { background:#0ea5e9; }
+  .pill-complete { background:#e8f5ef; color:#0f6b45; }
+  .pill-complete::before { background:#16a34a; }
+  .pill-failed { background:#fbe9ea; color:#9f1d2b; }
+  .pill-failed::before { background:#dc2626; }
+  .pill-cancelled { background:#eceae3; color:#57534e; }
+  .pill-cancelled::before { background:#a8a29e; }
+
+  .row-confirmed { border-left: 3px solid #16a34a; }
+  .row-needs_review { border-left: 3px solid #d97706; }
+  .row-unmapped { border-left: 3px solid #dc2626; }
+
+  .card { background:#fffdf9; border:1px solid #e7e4db; border-radius:1rem; }
+  .brandmark { background: radial-gradient(120% 120% at 20% 20%, #14785c 0%, #0d3a2e 100%); }
+
+  ::-webkit-scrollbar { width:8px; height:8px; }
+  ::-webkit-scrollbar-thumb { background:#d8d4c8; border-radius:999px; }
+
+  .tab-btn { border-bottom:2px solid transparent; }
+  .tab-btn.active { border-bottom-color:#0d3a2e; color:#0d3a2e; font-weight:600; }
+
+  pre.json-view { background:#0d1912; color:#d7ecdf; border-radius:.75rem; }
 </style>
 </head>
-<body class="bg-slate-50 min-h-screen text-slate-800">
+<body class="min-h-screen">
 
-<header class="bg-white border-b border-slate-200">
-  <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-    <div>
-      <h1 class="text-xl font-semibold">HealthPilot AI Lab Extraction &amp; LOINC Coding Agent</h1>
-      <p class="text-sm text-slate-500">Upload a lab report &rarr; extraction &rarr; normalization &rarr; LOINC mapping &rarr; structured storage</p>
+<header class="border-b border-[#e7e4db] bg-[#fffdf9]/90 backdrop-blur sticky top-0 z-10">
+  <div class="max-w-7xl mx-auto px-5 py-3 flex flex-wrap items-center justify-between gap-3">
+    <div class="flex items-center gap-3">
+      <div class="brandmark w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0">HP</div>
+      <div>
+        <h1 class="text-[15px] font-bold tracking-tight leading-none">HealthPilot Lab Agent</h1>
+        <p class="text-[11px] text-stone-500 mt-0.5">extraction &rarr; normalization &rarr; LOINC mapping &rarr; storage</p>
+      </div>
     </div>
-    <div class="flex items-center gap-2">
-      <input id="apiBaseInput" type="text" placeholder="Backend API URL (e.g. https://healthpilot-api.onrender.com)"
-        class="text-xs border border-slate-300 rounded px-2 py-1 w-80" />
-      <button id="saveApiBase" class="text-xs bg-slate-700 text-white px-3 py-1.5 rounded hover:bg-slate-800">Save</button>
+    <div class="flex items-center gap-2 w-full sm:w-auto">
+      <input id="apiBaseInput" type="text" placeholder="Backend URL (Render)"
+        class="text-xs border border-[#e7e4db] bg-white rounded-lg px-2.5 py-1.5 flex-1 sm:w-64 min-w-0 focus:outline-none focus:ring-2 focus:ring-[#0d3a2e]/20" />
+      <button id="saveApiBase" class="text-xs bg-[#0d3a2e] text-white px-3 py-1.5 rounded-lg hover:bg-[#0a2e25] font-medium shrink-0">Connect</button>
     </div>
   </div>
 </header>
 
-<main class="max-w-6xl mx-auto px-4 py-6 grid grid-cols-1 lg:grid-cols-3 gap-6">
+<main class="max-w-7xl mx-auto px-5 py-6 space-y-6">
 
-  <section class="lg:col-span-1 space-y-4">
-    <div class="bg-white rounded-lg border border-slate-200 p-4">
-      <h2 class="font-medium mb-2">Upload a report</h2>
-      <form id="uploadForm" class="space-y-3">
-        <input id="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt"
-          class="block w-full text-sm border border-slate-300 rounded p-2" required />
-        <button type="submit" id="uploadBtn"
-          class="w-full bg-indigo-600 text-white rounded py-2 text-sm font-medium hover:bg-indigo-700 disabled:opacity-50">
-          Upload &amp; Process
-        </button>
-      </form>
-      <p id="uploadStatus" class="text-xs text-slate-500 mt-2"></p>
-    </div>
+  <section id="statsStrip" class="grid grid-cols-2 md:grid-cols-4 gap-3"></section>
 
-    <div class="bg-white rounded-lg border border-slate-200 p-4">
-      <h2 class="font-medium mb-2">Reports</h2>
-      <div id="reportsList" class="space-y-1 max-h-[60vh] overflow-y-auto text-sm"></div>
-    </div>
-  </section>
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
 
-  <section class="lg:col-span-2">
-    <div class="bg-white rounded-lg border border-slate-200 p-4 min-h-[300px]">
-      <div id="detailEmpty" class="text-slate-400 text-sm">Select a report to view extracted observations.</div>
-      <div id="detailContent" class="hidden">
-        <div class="flex items-center justify-between mb-3">
-          <div>
-            <h2 id="detailFilename" class="font-medium"></h2>
-            <p id="detailMeta" class="text-xs text-slate-500"></p>
+    <section class="lg:col-span-4 space-y-5">
+      <div class="card p-5">
+        <h2 class="text-sm font-bold tracking-tight mb-3">Upload a report</h2>
+        <form id="uploadForm" class="space-y-3">
+          <label class="flex flex-col items-center justify-center gap-1 border-2 border-dashed border-[#e7e4db] rounded-xl py-6 cursor-pointer hover:border-[#0d3a2e]/40 transition-colors">
+            <span class="text-2xl">&#128196;</span>
+            <span class="text-xs text-stone-500" id="fileLabel">PDF, PNG, JPG, or TXT &middot; select multiple for batch</span>
+            <input id="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt" class="hidden" multiple required />
+          </label>
+          <button type="submit" id="uploadBtn"
+            class="w-full bg-[#0d3a2e] text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-[#0a2e25] disabled:opacity-50 transition-colors">
+            Upload &amp; Process
+          </button>
+        </form>
+        <p id="uploadStatus" class="text-xs text-stone-500 mt-2"></p>
+      </div>
+
+      <div class="card p-5">
+        <h2 class="text-sm font-bold tracking-tight mb-3">Reports</h2>
+        <div id="reportsList" class="space-y-1.5 max-h-[50vh] overflow-y-auto text-sm"></div>
+      </div>
+
+      <div class="card p-5">
+        <h2 class="text-sm font-bold tracking-tight mb-2">Terminology search</h2>
+        <input id="loincSearchInput" type="text" placeholder="e.g. glucose, TSH, 2345-7"
+          class="w-full border border-[#e7e4db] rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-[#0d3a2e]/20" />
+        <div id="loincSearchResults" class="text-xs space-y-1 max-h-48 overflow-y-auto"></div>
+      </div>
+    </section>
+
+    <section class="lg:col-span-8">
+      <div class="card p-5 min-h-[420px]">
+        <div id="detailEmpty" class="h-full flex items-center justify-center text-stone-400 text-sm py-24">
+          Select a report to view extracted observations.
+        </div>
+        <div id="detailContent" class="hidden">
+          <div class="flex items-start justify-between mb-2 gap-3">
+            <div>
+              <h2 id="detailFilename" class="font-bold tracking-tight"></h2>
+              <p id="detailMeta" class="text-xs text-stone-500 mt-0.5"></p>
+            </div>
+            <div class="flex items-center gap-2 shrink-0">
+              <button id="cancelBtn" class="hidden text-xs border border-rose-200 text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg hover:bg-rose-100 font-medium">Cancel</button>
+              <span id="detailStatusBadge" class="status-pill text-xs px-2.5 py-1 rounded-full"></span>
+            </div>
           </div>
-          <span id="detailStatusBadge" class="text-xs px-2 py-1 rounded font-medium"></span>
-        </div>
-        <div class="flex gap-2 mb-3 text-xs">
-          <span class="px-2 py-1 rounded badge-confirmed">Confirmed</span>
-          <span class="px-2 py-1 rounded badge-needs_review">Needs Review</span>
-          <span class="px-2 py-1 rounded badge-unmapped">Unmapped</span>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm border-collapse">
-            <thead>
-              <tr class="text-left text-slate-500 border-b border-slate-200">
-                <th class="py-2 pr-2">Original Name</th>
-                <th class="py-2 pr-2">Normalized</th>
-                <th class="py-2 pr-2">Value</th>
-                <th class="py-2 pr-2">Unit</th>
-                <th class="py-2 pr-2">Ref. Range</th>
-                <th class="py-2 pr-2">Specimen</th>
-                <th class="py-2 pr-2">LOINC</th>
-                <th class="py-2 pr-2">LOINC Display</th>
-                <th class="py-2 pr-2">Mapping</th>
-                <th class="py-2 pr-2">Conf.</th>
-                <th class="py-2 pr-2">Page</th>
-              </tr>
-            </thead>
-            <tbody id="observationsBody"></tbody>
-          </table>
+
+          <div id="qualityChips" class="flex flex-wrap gap-2 mb-4 text-[11px]"></div>
+
+          <div class="flex items-center gap-4 border-b border-[#e7e4db] mb-4 text-sm">
+            <button class="tab-btn active py-2 px-1" data-tab="clinical">Clinical view</button>
+            <button class="tab-btn py-2 px-1" data-tab="fhir">FHIR bundle</button>
+          </div>
+
+          <div id="clinicalTab">
+            <div id="observationCards" class="space-y-2"></div>
+          </div>
+
+          <div id="fhirTab" class="hidden">
+            <div class="flex justify-end mb-2">
+              <button id="copyFhirBtn" class="text-xs border border-[#e7e4db] rounded-lg px-2.5 py-1 hover:bg-stone-50">Copy JSON</button>
+            </div>
+            <pre id="fhirJson" class="json-view mono text-xs p-4 overflow-auto max-h-[60vh]"></pre>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <div class="bg-white rounded-lg border border-slate-200 p-4 mt-6">
-      <h2 class="font-medium mb-2">LOINC Terminology Search</h2>
-      <input id="loincSearchInput" type="text" placeholder="Search e.g. 'glucose', 'TSH', '2345-7'"
-        class="w-full border border-slate-300 rounded px-3 py-2 text-sm mb-2" />
-      <div id="loincSearchResults" class="text-sm space-y-1 max-h-64 overflow-y-auto"></div>
-    </div>
-  </section>
-
+  </div>
 </main>
 
 <script src="js/app.js"></script>

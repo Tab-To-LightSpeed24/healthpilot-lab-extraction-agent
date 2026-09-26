@@ -5,7 +5,7 @@ from app.services.normalization import build_alias_index, lookup_exact
 
 def test_load_loinc_records_are_well_formed():
     records = load_loinc_records()
-    assert len(records) >= 50, "curated LOINC subset should have a meaningful number of codes"
+    assert len(records) >= 50000, "the full Laboratory/ACTIVE LOINC table should have tens of thousands of codes"
 
     seen_codes = set()
     for rec in records:
@@ -25,7 +25,11 @@ def test_seed_loinc_table_is_idempotent(db_session):
 
 
 def test_alias_index_resolves_common_synonyms():
-    index = build_alias_index(load_loinc_records())
+    """Uses get_alias_index() (not build_alias_index() directly) because the
+    human-verified override layer (app/data/loinc_alias_overrides.json) is
+    merged in at that level -- see that file's own comment for why it's
+    needed on top of the full official table."""
+    index = get_alias_index()
 
     cases = {
         "Hgb": "718-7",
@@ -47,6 +51,30 @@ def test_alias_index_resolves_common_synonyms():
 def test_alias_index_does_not_match_unrelated_text():
     index = build_alias_index(load_loinc_records())
     assert lookup_exact("some random unrelated phrase", index) is None
+
+
+def test_build_alias_index_drops_genuinely_ambiguous_aliases_rather_than_guess():
+    """Regression test for a real finding: at full-table scale, common bare
+    abbreviations ('WBC', 'SGPT', 'LDL-C', ...) are legitimately listed by
+    LOINC's own RELATEDNAMES2 against MANY distinct, unrelated-enough codes.
+    build_alias_index() (without the override layer) must refuse to guess
+    among them rather than silently pick whichever it saw first."""
+    index = build_alias_index(load_loinc_records())
+    assert lookup_exact("WBC", index) is None
+    assert lookup_exact("SGPT", index) is None
+
+
+def test_bare_specimen_dependent_terms_are_never_alias_overridden():
+    """Regression guard for the urine-glucose mismapping bug: bare 'Glucose'
+    (and 'Protein') must NOT resolve via the deterministic alias-exact stage
+    at all, in either the raw full-table index or the override-merged one --
+    only the lexical-search+LLM stage has the specimen context needed to
+    pick serum vs. urine correctly."""
+    raw_index = build_alias_index(load_loinc_records())
+    merged_index = get_alias_index()
+    for term in ("Glucose", "Protein"):
+        assert lookup_exact(term, raw_index) is None
+        assert lookup_exact(term, merged_index) is None
 
 
 def test_get_alias_index_is_cached_and_consistent():

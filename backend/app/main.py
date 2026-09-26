@@ -6,22 +6,27 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import routes_reports, routes_observations, routes_loinc
 from app.core.config import settings
-from app.core.db import Base, engine, SessionLocal
+from app.core.db import engine, SessionLocal
+from app.core.migrate import run_migrations
 from app.services.loinc_loader import seed_loinc_table
+from app.services.worker import start_worker
 
 logging.basicConfig(level=logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    run_migrations(engine)
     db = SessionLocal()
     try:
         count = seed_loinc_table(db)
         logging.info("LOINC reference table ready: %s codes", count)
     finally:
         db.close()
+
+    stop_worker = start_worker()
     yield
+    stop_worker.set()
 
 
 app = FastAPI(
