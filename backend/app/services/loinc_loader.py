@@ -66,41 +66,53 @@ def _flush(db: Session, model, buffer: list[dict]) -> None:
 
 
 def seed_loinc_table(db: Session) -> int:
-    """Streams the CSV and inserts in chunks (idempotent for LoincCode rows
-    -- avoids re-inserting ~62k rows on every restart). Aliases are refreshed
-    every call regardless, since regenerating loinc_lab_active.csv (e.g. a
-    newer LOINC release, or a hand-added synonym) is the expected way to fix
-    a mapping miss, and a stale persisted alias table would silently ignore
-    that on an already-seeded database. The CSV is read twice (once for
-    codes, once for aliases) rather than kept as one big in-memory list --
-    trading a second cheap disk read for a much lower memory ceiling."""
-    existing = db.query(LoincCode).count()
-    total = 0
+    """Streams the CSV and inserts both tables in chunks, unconditionally
+    re-syncing from scratch every startup.
 
-    if existing == 0:
-        buffer: list[dict] = []
-        for rec in _iter_loinc_rows():
-            buffer.append({
-                "loinc_num": rec["loinc_num"],
-                "long_common_name": rec["long_common_name"],
-                "shortname": rec.get("shortname"),
-                "component": rec.get("component"),
-                "property": rec.get("property"),
-                "time_aspect": rec.get("time_aspect"),
-                "system": rec.get("system"),
-                "scale_type": rec.get("scale_type"),
-                "method_type": rec.get("method_type"),
-                "class_": rec.get("class"),
-                "example_units": rec.get("example_units"),
-                "common_test_rank": rec.get("common_test_rank") or 0,
-            })
-            if len(buffer) >= CHUNK_SIZE:
-                _flush(db, LoincCode, buffer)
-        _flush(db, LoincCode, buffer)
+    This used to skip re-inserting LoincCode rows whenever the table was
+    already non-empty ("existing == 0" idempotency check), on the assumption
+    that non-empty meant fully, correctly seeded. That assumption broke a
+    real deploy: an earlier startup was interrupted partway through the
+    chunked code inserts (before the memory fix in this same function,
+    an OOM kill), leaving loinc_codes with only *some* of the ~62k rows.
+    The next startup saw existing > 0, skipped code insertion entirely, but
+    still ran the (unconditional) alias-refresh pass -- which assumes every
+    code in the current CSV already exists -- and hit a real
+    ForeignKeyViolation for every alias whose code had never actually been
+    inserted. Confirmed by reproducing it locally against a real Postgres
+    left in exactly that partially-seeded state.
 
+    Fix: always fully delete-and-reinsert both tables (children before
+    parents, to respect the FK). At this point the whole operation streams
+    and chunks rather than materializing anything large in memory, so a full
+    resync on every restart is fast and cheap -- correctness from a clean,
+    consistent state every time is worth more than the small time saved by
+    conditionally skipping it."""
     db.query(LoincAlias).delete()
+    db.query(LoincCode).delete()
     db.commit()
 
+    code_buffer: list[dict] = []
+    for rec in _iter_loinc_rows():
+        code_buffer.append({
+            "loinc_num": rec["loinc_num"],
+            "long_common_name": rec["long_common_name"],
+            "shortname": rec.get("shortname"),
+            "component": rec.get("component"),
+            "property": rec.get("property"),
+            "time_aspect": rec.get("time_aspect"),
+            "system": rec.get("system"),
+            "scale_type": rec.get("scale_type"),
+            "method_type": rec.get("method_type"),
+            "class_": rec.get("class"),
+            "example_units": rec.get("example_units"),
+            "common_test_rank": rec.get("common_test_rank") or 0,
+        })
+        if len(code_buffer) >= CHUNK_SIZE:
+            _flush(db, LoincCode, code_buffer)
+    _flush(db, LoincCode, code_buffer)
+
+    total = 0
     alias_buffer: list[dict] = []
     for rec in _iter_loinc_rows():
         total += 1
@@ -110,7 +122,7 @@ def seed_loinc_table(db: Session) -> int:
                 _flush(db, LoincAlias, alias_buffer)
     _flush(db, LoincAlias, alias_buffer)
 
-    return max(existing, total)
+    return total
 
 
 def load_alias_overrides() -> dict[str, str]:

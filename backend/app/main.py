@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -15,6 +16,18 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def _run_startup_migrations_and_seed() -> int:
+    """The actual blocking work (Alembic + psycopg2 + a bulk DB seed),
+    isolated into one plain synchronous function so it can be handed to a
+    worker thread instead of running directly on the event-loop thread."""
+    run_migrations(engine)
+    db = SessionLocal()
+    try:
+        return seed_loinc_table(db)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Deliberately explicit try/except with logger.exception (full traceback)
@@ -23,21 +36,24 @@ async def lifespan(app: FastAPI):
     # "Exited with status 3" and no traceback at all in the logs, which made
     # diagnosing it needlessly hard. This guarantees the next failure, if
     # any, is actually diagnosable from the logs alone.
+    #
+    # Also -- and this is what was actually causing that crash, confirmed by
+    # reproducing it locally in Docker: this blocking migration/seeding work
+    # was previously called directly on uvicorn's event-loop thread. Calling
+    # it standalone (no event loop running) always worked; calling it inside
+    # uvicorn's lifespan reliably died with no traceback at all, every time,
+    # regardless of the loop implementation (uvloop or plain asyncio) or
+    # available memory (reproduced with no memory limit at all). Running it
+    # in a worker thread via asyncio.to_thread avoids running blocking
+    # psycopg2/Alembic I/O directly on the event-loop thread altogether,
+    # which is the correct pattern for blocking calls in an async app
+    # regardless of the exact low-level cause.
     try:
-        run_migrations(engine)
+        count = await asyncio.to_thread(_run_startup_migrations_and_seed)
+        logger.info("LOINC reference table ready: %s codes", count)
     except Exception:
-        logger.exception("Database migration failed during startup")
+        logger.exception("Startup migration/seeding failed")
         raise
-
-    db = SessionLocal()
-    try:
-        count = seed_loinc_table(db)
-        logging.info("LOINC reference table ready: %s codes", count)
-    except Exception:
-        logger.exception("LOINC table seeding failed during startup")
-        raise
-    finally:
-        db.close()
 
     stop_worker = start_worker()
     yield

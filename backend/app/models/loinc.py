@@ -15,7 +15,11 @@ class LoincCode(Base):
     time_aspect = Column(String(64), nullable=True)
     system = Column(String(128), nullable=True)  # specimen/system, e.g. Serum/Plasma
     scale_type = Column(String(64), nullable=True)
-    method_type = Column(String(128), nullable=True)
+    # LOINC method descriptions can be verbose -- the real official data has
+    # entries up to 134 chars (e.g. compound thromboelastography method
+    # names), which a real deploy hit and failed on with the old 128-char
+    # column. Sized with headroom above the current observed max.
+    method_type = Column(String(256), nullable=True)
     class_ = Column("class", String(128), nullable=True)
     example_units = Column(String(128), nullable=True)
     # LOINC's own "how often this is actually ordered" signal (0 = unranked).

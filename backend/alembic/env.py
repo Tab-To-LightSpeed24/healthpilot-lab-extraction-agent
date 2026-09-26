@@ -84,7 +84,15 @@ def run_migrations_online() -> None:
     """
     connection = config.attributes.get("connection")
     if connection is not None:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        # SQLite doesn't support ALTER COLUMN (or most other ALTER TABLE
+        # variants) directly -- Alembic works around that by rebuilding the
+        # table under the hood, but only when render_as_batch is enabled.
+        # Without it, a migration that does `op.alter_column(..., type_=...)`
+        # (needed for the Postgres side) fails outright on SQLite, which is
+        # what every local dev/test run uses. Postgres doesn't need or use
+        # batch mode, so this only changes behavior for SQLite.
+        render_as_batch = connection.dialect.name == "sqlite"
+        context.configure(connection=connection, target_metadata=target_metadata, render_as_batch=render_as_batch)
         with context.begin_transaction():
             context.run_migrations()
         return
@@ -96,8 +104,9 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        render_as_batch = connection.dialect.name == "sqlite"
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection, target_metadata=target_metadata, render_as_batch=render_as_batch
         )
 
         with context.begin_transaction():
