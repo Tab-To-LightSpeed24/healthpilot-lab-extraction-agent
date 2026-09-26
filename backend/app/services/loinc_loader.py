@@ -1,6 +1,7 @@
 import csv
 import json
 from pathlib import Path
+from typing import Iterator
 
 from sqlalchemy.orm import Session
 
@@ -12,17 +13,26 @@ OVERRIDES_PATH = Path(__file__).resolve().parent.parent / "data" / "loinc_alias_
 
 _alias_index_cache: dict[str, dict] | None = None
 
+# Render's free tier caps a web service at 512MB total. Materializing all
+# ~62k codes and their ~500k+ aliases as two separate in-memory Python lists
+# (one from load_loinc_records(), a second flat "alias_rows" list built from
+# it) actually OOM-killed a real deploy -- confirmed directly in Render's own
+# logs ("Out of memory (used over 512Mi)"), not a hypothetical concern.
+# seed_loinc_table() below streams and inserts in small chunks instead, so
+# peak memory is bounded by CHUNK_SIZE regardless of table size.
+CHUNK_SIZE = 3000
 
-def load_loinc_records() -> list[dict]:
-    """Reads the ~62k Laboratory-class, ACTIVE LOINC codes derived from the
-    official loinc.org release by scripts/build_loinc_data.py. See that
-    script's docstring for provenance -- the raw ~1GB release itself is not
-    checked into this repo, only this already-filtered, already-derived CSV
-    is."""
-    records = []
+
+def _iter_loinc_rows() -> Iterator[dict]:
+    """Streams one row at a time straight from the CSV -- never holds the
+    whole ~62k-row table in memory. Use this (not load_loinc_records()) for
+    anything that runs at process startup, where peak memory actually
+    matters; load_loinc_records() below remains for callers (get_alias_index,
+    tests) that already need the full set in memory anyway and don't run
+    under the same startup memory pressure."""
     with open(DATA_PATH, encoding="utf-8", newline="") as f:
         for row in csv.DictReader(f):
-            records.append({
+            yield {
                 "loinc_num": row["loinc_num"],
                 "long_common_name": row["long_common_name"],
                 "shortname": row["shortname"] or None,
@@ -36,25 +46,41 @@ def load_loinc_records() -> list[dict]:
                 "example_units": row["example_units"] or None,
                 "common_test_rank": int(row["common_test_rank"] or 0),
                 "aliases": [a for a in row["aliases"].split("|") if a] if row["aliases"] else [],
-            })
-    return records
+            }
+
+
+def load_loinc_records() -> list[dict]:
+    """Reads the ~62k Laboratory-class, ACTIVE LOINC codes derived from the
+    official loinc.org release by scripts/build_loinc_data.py. See that
+    script's docstring for provenance -- the raw ~1GB release itself is not
+    checked into this repo, only this already-filtered, already-derived CSV
+    is."""
+    return list(_iter_loinc_rows())
+
+
+def _flush(db: Session, model, buffer: list[dict]) -> None:
+    if buffer:
+        db.bulk_insert_mappings(model, buffer)
+        db.commit()
+        buffer.clear()
 
 
 def seed_loinc_table(db: Session) -> int:
-    """Bulk-inserts LoincCode rows only if the table is empty (idempotent --
-    avoids re-inserting ~62k rows on every restart). Aliases are refreshed
+    """Streams the CSV and inserts in chunks (idempotent for LoincCode rows
+    -- avoids re-inserting ~62k rows on every restart). Aliases are refreshed
     every call regardless, since regenerating loinc_lab_active.csv (e.g. a
     newer LOINC release, or a hand-added synonym) is the expected way to fix
     a mapping miss, and a stale persisted alias table would silently ignore
-    that on an already-seeded database. Uses bulk_insert_mappings rather than
-    one ORM object + db.add() per row -- at this row count (~62k codes,
-    ~500k+ aliases) the per-row ORM path is minutes slower."""
-    records = load_loinc_records()
+    that on an already-seeded database. The CSV is read twice (once for
+    codes, once for aliases) rather than kept as one big in-memory list --
+    trading a second cheap disk read for a much lower memory ceiling."""
     existing = db.query(LoincCode).count()
+    total = 0
 
     if existing == 0:
-        code_rows = [
-            {
+        buffer: list[dict] = []
+        for rec in _iter_loinc_rows():
+            buffer.append({
                 "loinc_num": rec["loinc_num"],
                 "long_common_name": rec["long_common_name"],
                 "shortname": rec.get("shortname"),
@@ -67,22 +93,24 @@ def seed_loinc_table(db: Session) -> int:
                 "class_": rec.get("class"),
                 "example_units": rec.get("example_units"),
                 "common_test_rank": rec.get("common_test_rank") or 0,
-            }
-            for rec in records
-        ]
-        db.bulk_insert_mappings(LoincCode, code_rows)
-        db.commit()
+            })
+            if len(buffer) >= CHUNK_SIZE:
+                _flush(db, LoincCode, buffer)
+        _flush(db, LoincCode, buffer)
 
     db.query(LoincAlias).delete()
-    alias_rows = [
-        {"loinc_num": rec["loinc_num"], "alias": alias}
-        for rec in records
-        for alias in rec.get("aliases", [])
-    ]
-    db.bulk_insert_mappings(LoincAlias, alias_rows)
     db.commit()
 
-    return max(existing, len(records))
+    alias_buffer: list[dict] = []
+    for rec in _iter_loinc_rows():
+        total += 1
+        for alias in rec["aliases"]:
+            alias_buffer.append({"loinc_num": rec["loinc_num"], "alias": alias})
+            if len(alias_buffer) >= CHUNK_SIZE:
+                _flush(db, LoincAlias, alias_buffer)
+    _flush(db, LoincAlias, alias_buffer)
+
+    return max(existing, total)
 
 
 def load_alias_overrides() -> dict[str, str]:

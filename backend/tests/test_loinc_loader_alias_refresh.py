@@ -17,7 +17,10 @@ def test_reseeding_refreshes_aliases_even_when_codes_already_exist(db_session):
         {"loinc_num": "2345-7", "long_common_name": "Glucose [Mass/volume] in Serum or Plasma",
          "shortname": "Glucose", "aliases": ["Glucose", "Totally New Synonym"]},
     ]
-    with patch("app.services.loinc_loader.load_loinc_records", return_value=fake_records):
+    # seed_loinc_table streams via _iter_loinc_rows() (not load_loinc_records())
+    # so its memory use stays bounded regardless of table size -- see that
+    # function's docstring. Patch the actual data source it reads from.
+    with patch("app.services.loinc_loader._iter_loinc_rows", side_effect=lambda: iter(fake_records)):
         seed_loinc_table(db_session)  # second seed, LoincCode rows already exist
 
     aliases = {a.alias for a in db_session.query(LoincAlias).filter(LoincAlias.loinc_num == "2345-7").all()}
