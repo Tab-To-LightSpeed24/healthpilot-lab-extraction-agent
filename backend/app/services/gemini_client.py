@@ -54,6 +54,15 @@ Rules:
   ">500", "Positive", "Negative", "Trace", "Not Detected".
 - If a field (unit, reference range, specimen, method, timing, flag) is not
   present on the page, omit it (use null) rather than guessing.
+- IMPORTANT: specimen/section context stated ONCE for a whole panel (e.g. a
+  page header or section title like "Urinalysis - Specimen: Urine", or a
+  panel titled "Serum Chemistry") applies to EVERY test row under it, even
+  though it is only printed once. Copy that specimen value into the
+  `specimen` field of each individual test row it covers -- do not leave
+  `specimen` null just because it wasn't repeated on that specific row. This
+  matters because the same test name (e.g. "Glucose" or "Protein") means a
+  different LOINC concept in urine vs. serum/blood, so losing this context
+  causes a wrong code to be assigned downstream.
 - Do not include panel/section headers, patient demographics, or narrative
   text as if they were tests.
 - Give each row an extraction_confidence between 0 and 1 reflecting how

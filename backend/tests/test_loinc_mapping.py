@@ -49,7 +49,7 @@ def test_map_observation_falls_back_to_embedding_llm_when_no_alias(db_session):
         result = loinc_mapping.map_observation(
             db=db_session,
             alias_index=alias_index,
-            original_test_name="Fasting Blood Sugar",  # not in alias table verbatim
+            original_test_name="Plasma Sugar Level",  # deliberately not in the alias table verbatim
             value="95",
             unit="mg/dL",
             specimen="Serum",

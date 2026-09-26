@@ -17,31 +17,38 @@ def load_loinc_records() -> list[dict]:
 
 
 def seed_loinc_table(db: Session) -> int:
-    """Idempotent: only inserts if the table is empty. Returns row count after seeding."""
-    existing = db.query(LoincCode).count()
-    if existing > 0:
-        return existing
-
+    """Inserts LoincCode rows only if the table is empty (idempotent -- avoids
+    re-inserting ~65 rows on every restart). Aliases are refreshed every call
+    regardless, since editing app/data/loinc_subset.json to add a synonym is
+    the expected way to fix a mapping miss, and a stale persisted alias table
+    would silently ignore that edit on an already-seeded database."""
     records = load_loinc_records()
+    existing = db.query(LoincCode).count()
+
+    if existing == 0:
+        for rec in records:
+            db.add(LoincCode(
+                loinc_num=rec["loinc_num"],
+                long_common_name=rec["long_common_name"],
+                shortname=rec.get("shortname"),
+                component=rec.get("component"),
+                property=rec.get("property"),
+                time_aspect=rec.get("time_aspect"),
+                system=rec.get("system"),
+                scale_type=rec.get("scale_type"),
+                method_type=rec.get("method_type"),
+                class_=rec.get("class"),
+                example_units=rec.get("example_units"),
+            ))
+        db.commit()
+
+    db.query(LoincAlias).delete()
     for rec in records:
-        row = LoincCode(
-            loinc_num=rec["loinc_num"],
-            long_common_name=rec["long_common_name"],
-            shortname=rec.get("shortname"),
-            component=rec.get("component"),
-            property=rec.get("property"),
-            time_aspect=rec.get("time_aspect"),
-            system=rec.get("system"),
-            scale_type=rec.get("scale_type"),
-            method_type=rec.get("method_type"),
-            class_=rec.get("class"),
-            example_units=rec.get("example_units"),
-        )
-        db.add(row)
         for alias in rec.get("aliases", []):
             db.add(LoincAlias(loinc_num=rec["loinc_num"], alias=alias))
     db.commit()
-    return len(records)
+
+    return max(existing, len(records))
 
 
 def get_alias_index() -> dict[str, dict]:
