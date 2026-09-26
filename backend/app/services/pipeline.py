@@ -30,15 +30,17 @@ def process_document(document_id: str) -> None:
 
         alias_index = get_alias_index()
         any_failure = False
+        failure_reasons: list[str] = []
 
         for page in pages:
             try:
                 result = gemini_client.extract_page(page.image_png, page.text)
-            except Exception:
+            except Exception as exc:
                 logger.exception(
                     "Extraction failed for document %s page %s", document_id, page.page_number
                 )
                 any_failure = True
+                failure_reasons.append(f"page {page.page_number}: {exc}")
                 continue
 
             for test in result.tests:
@@ -92,8 +94,12 @@ def process_document(document_id: str) -> None:
             db.commit()
 
         doc.status = DocumentStatus.failed if any_failure and not doc.observations else DocumentStatus.complete
-        if any_failure and doc.status == DocumentStatus.complete:
-            doc.error_message = "One or more pages failed extraction; results may be incomplete."
+        if any_failure:
+            reason_summary = "; ".join(failure_reasons)[:2000]
+            doc.error_message = (
+                reason_summary if doc.status == DocumentStatus.failed
+                else f"One or more pages failed extraction; results may be incomplete. {reason_summary}"
+            )
         db.commit()
     except Exception as exc:
         logger.exception("process_document crashed for %s", document_id)

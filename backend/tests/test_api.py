@@ -166,3 +166,5 @@ def test_extraction_failure_marks_document_failed_not_silently_complete(client):
     detail = client.get(f"/reports/{doc_id}").json()
     assert detail["status"] == "failed"
     assert detail["observations"] == []
+    assert detail["error_message"], "a failed document must surface why, not silently show error_message=null"
+    assert "Gemini API error" in detail["error_message"]
