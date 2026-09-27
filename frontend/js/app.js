@@ -59,10 +59,47 @@ document.getElementById("copyFhirBtn").addEventListener("click", () => {
   navigator.clipboard.writeText(fhirJson.textContent).catch(() => {});
 });
 
+// Render's free tier spins the backend down after ~15 min idle; the first
+// request after that can take 30-60s to wake it up. A plain fetch() with no
+// timeout at all means a genuinely broken request (dropped connection, CORS
+// preflight failing silently, DNS issue) hangs forever with zero feedback --
+// exactly what looked like a stuck "Loading..." with no error. Every request
+// now has an explicit timeout and always surfaces *something* to the user
+// and the console, even when it fails.
+const REQUEST_TIMEOUT_MS = 45000;
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(
+        `Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s (${url}). ` +
+        `If the backend was idle, Render's free tier can take up to a minute to wake up -- try again.`
+      );
+    }
+    // A fetch-level TypeError here almost always means the request never
+    // reached the server at all (CORS rejection, DNS failure, offline).
+    throw new Error(`Network error reaching ${url}: ${err.message}`);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function api(path, options = {}) {
-  const resp = await fetch(`${getApiBase()}${path}`, options);
+  const url = `${getApiBase()}${path}`;
+  let resp;
+  try {
+    resp = await fetchWithTimeout(url, options);
+  } catch (err) {
+    console.error("[api] request failed:", url, err);
+    throw err;
+  }
   if (!resp.ok) {
     const text = await resp.text().catch(() => "");
+    console.error("[api] non-OK response:", url, resp.status, text);
     throw new Error(`${resp.status} ${resp.statusText}: ${text}`);
   }
   return resp.json();
@@ -301,9 +338,11 @@ uploadForm.addEventListener("submit", async (e) => {
     const isBatch = files.length > 1;
     files.forEach((f) => formData.append(isBatch ? "files" : "file", f));
 
-    const resp = await fetch(`${getApiBase()}${isBatch ? "/reports/batch" : "/reports"}`, { method: "POST", body: formData });
+    const url = `${getApiBase()}${isBatch ? "/reports/batch" : "/reports"}`;
+    const resp = await fetchWithTimeout(url, { method: "POST", body: formData });
     if (!resp.ok) {
-      const text = await resp.text();
+      const text = await resp.text().catch(() => "");
+      console.error("[upload] non-OK response:", url, resp.status, text);
       throw new Error(`${resp.status}: ${text}`);
     }
     const result = await resp.json();
@@ -314,6 +353,7 @@ uploadForm.addEventListener("submit", async (e) => {
     await loadReports();
     await selectReport(docs[0].id);
   } catch (err) {
+    console.error("[upload] failed:", err);
     uploadStatus.textContent = `Upload failed: ${err.message}`;
   } finally {
     uploadBtn.disabled = false;
@@ -349,4 +389,18 @@ loincSearchInput.addEventListener("input", () => {
   }, 300);
 });
 
+const backendStatusBanner = document.getElementById("backendStatusBanner");
+
+async function checkBackendHealth() {
+  try {
+    await fetchWithTimeout(`${getApiBase()}/health`);
+    backendStatusBanner.classList.add("hidden");
+  } catch (err) {
+    console.error("[health] backend unreachable:", err);
+    backendStatusBanner.textContent = `Backend unreachable (${getApiBase()}): ${err.message}`;
+    backendStatusBanner.classList.remove("hidden");
+  }
+}
+
+checkBackendHealth();
 loadReports();

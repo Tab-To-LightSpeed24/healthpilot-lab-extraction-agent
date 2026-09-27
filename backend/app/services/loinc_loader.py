@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 from typing import Iterator
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.loinc import LoincCode, LoincAlias
@@ -14,13 +15,23 @@ OVERRIDES_PATH = Path(__file__).resolve().parent.parent / "data" / "loinc_alias_
 _alias_index_cache: dict[str, dict] | None = None
 
 # Render's free tier caps a web service at 512MB total. Materializing all
-# ~62k codes and their ~500k+ aliases as two separate in-memory Python lists
+# ~62k codes and their ~1.7M aliases as two separate in-memory Python lists
 # (one from load_loinc_records(), a second flat "alias_rows" list built from
 # it) actually OOM-killed a real deploy -- confirmed directly in Render's own
 # logs ("Out of memory (used over 512Mi)"), not a hypothetical concern.
-# seed_loinc_table() below streams and inserts in small chunks instead, so
-# peak memory is bounded by CHUNK_SIZE regardless of table size.
-CHUNK_SIZE = 3000
+# seed_loinc_table() below streams and inserts in chunks instead, so peak
+# memory is bounded by CHUNK_SIZE regardless of table size.
+#
+# CHUNK_SIZE also controls how many DB round trips a real reseed takes. At
+# ~1.7M alias rows, the previous value of 3000 meant ~565 commits -- fine
+# against local SQLite on the same machine, but against a real networked
+# Postgres (Render's free tier) each round trip's latency adds up: a real
+# deploy hung for the full 15-minute platform timeout with the app never
+# reaching uvicorn.run() at all, confirmed by Render's own deploy log
+# showing "no open ports detected" for the entire window. Raised here to
+# cut round trips by >10x; paired with the row-count short-circuit below so
+# a normal restart (table already correct) does no bulk writes at all.
+CHUNK_SIZE = 20000
 
 
 def _iter_loinc_rows() -> Iterator[dict]:
@@ -65,31 +76,69 @@ def _flush(db: Session, model, buffer: list[dict]) -> None:
         buffer.clear()
 
 
+def _count_source_rows() -> tuple[int, int]:
+    """One cheap streaming pass over the CSV to get the row counts the DB
+    should have if it's already fully and correctly seeded. Reading the
+    26MB CSV this way takes low single-digit seconds; it's the DB round
+    trips of an actual reseed that are expensive (see CHUNK_SIZE above), so
+    doing this pass first to decide whether a reseed is even needed is a
+    large net win whenever the table is already correct."""
+    codes = 0
+    aliases = 0
+    for rec in _iter_loinc_rows():
+        codes += 1
+        aliases += len(rec["aliases"])
+    return codes, aliases
+
+
 def seed_loinc_table(db: Session) -> int:
-    """Streams the CSV and inserts both tables in chunks, unconditionally
-    re-syncing from scratch every startup.
+    """Reseeds both LOINC tables from the CSV, but only when they don't
+    already match it -- checked cheaply via row counts before touching the
+    tables at all.
 
-    This used to skip re-inserting LoincCode rows whenever the table was
-    already non-empty ("existing == 0" idempotency check), on the assumption
-    that non-empty meant fully, correctly seeded. That assumption broke a
-    real deploy: an earlier startup was interrupted partway through the
-    chunked code inserts (before the memory fix in this same function,
-    an OOM kill), leaving loinc_codes with only *some* of the ~62k rows.
-    The next startup saw existing > 0, skipped code insertion entirely, but
-    still ran the (unconditional) alias-refresh pass -- which assumes every
-    code in the current CSV already exists -- and hit a real
-    ForeignKeyViolation for every alias whose code had never actually been
+    This function used to unconditionally delete-and-reinsert both tables
+    on every single startup, needed to fix a real prior bug: an earlier
+    startup was interrupted partway through the chunked code inserts
+    (before the memory fix above, an OOM kill), leaving loinc_codes with
+    only *some* of the ~62k rows; the next startup's old "skip if non-empty"
+    check saw existing > 0, skipped re-inserting codes, but still refreshed
+    aliases -- which assumes every code in the CSV already exists -- and hit
+    a real ForeignKeyViolation for every alias whose code was never actually
     inserted. Confirmed by reproducing it locally against a real Postgres
-    left in exactly that partially-seeded state.
+    left in exactly that partially-seeded state (see
+    test_seed_loinc_table_recovers_from_a_partially_seeded_prior_run).
 
-    Fix: always fully delete-and-reinsert both tables (children before
-    parents, to respect the FK). At this point the whole operation streams
-    and chunks rather than materializing anything large in memory, so a full
-    resync on every restart is fast and cheap -- correctness from a clean,
-    consistent state every time is worth more than the small time saved by
-    conditionally skipping it."""
-    db.query(LoincAlias).delete()
-    db.query(LoincCode).delete()
+    Unconditionally resyncing fixed that, but introduced a new real bug:
+    with ~1.7M alias rows, a full delete-and-reinsert against a real
+    networked Postgres (not local SQLite) took long enough that a live
+    Render deploy hung for the platform's entire 15-minute startup timeout,
+    never reaching uvicorn.run() at all -- confirmed directly in Render's
+    deploy log (repeated "no open ports detected" for the full window,
+    then "Timed Out"). A plain restart with an already-correct table has no
+    reason to pay that cost every time.
+
+    Fix: compare actual row counts in each table against what the CSV
+    should produce. A match means the table is already fully, correctly
+    seeded (including recovering the FK-violation scenario above, since a
+    partial seed's counts can never coincidentally match both tables at
+    once) -- skip the resync entirely. A mismatch (empty, partial, stale,
+    or corrupted) still triggers a full resync exactly as before, so the
+    original correctness guarantee is unchanged; only the redundant-reseed
+    cost on top of it is."""
+    expected_codes, expected_aliases = _count_source_rows()
+    actual_codes = db.query(LoincCode).count()
+    actual_aliases = db.query(LoincAlias).count()
+    if actual_codes == expected_codes and actual_aliases == expected_aliases:
+        return actual_codes
+
+    dialect = db.get_bind().dialect.name
+    if dialect == "sqlite":
+        # SQLite has no TRUNCATE; a bare DELETE is fine at this table size
+        # for local dev/tests, where this path isn't the bottleneck anyway.
+        db.query(LoincAlias).delete()
+        db.query(LoincCode).delete()
+    else:
+        db.execute(text("TRUNCATE TABLE loinc_aliases, loinc_codes"))
     db.commit()
 
     code_buffer: list[dict] = []
