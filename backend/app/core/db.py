@@ -13,7 +13,11 @@ def normalize_database_url(url: str) -> str:
     return url
 
 
-DATABASE_URL = normalize_database_url(settings.database_url)
+_SQLITE_FALLBACK = "sqlite:///./healthpilot_dev.db"
+
+DATABASE_URL = normalize_database_url(settings.database_url or _SQLITE_FALLBACK)
+if DATABASE_URL.strip() == "":
+    DATABASE_URL = _SQLITE_FALLBACK
 
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):

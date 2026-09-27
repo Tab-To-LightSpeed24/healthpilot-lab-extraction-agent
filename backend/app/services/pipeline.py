@@ -124,6 +124,23 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                 db.add(obs)
             pages_completed += 1
             _touch(db, doc)
+            if _is_cancel_requested(db, document_id):
+                doc.status = DocumentStatus.cancelled
+                doc.error_message = (
+                    f"Cancelled after {pages_completed}/{len(pages)} page(s) by user request."
+                )
+                db.commit()
+                logger.info("Document %s cancelled after %s pages", document_id, pages_completed)
+                return
+
+        if _is_cancel_requested(db, document_id):
+            doc.status = DocumentStatus.cancelled
+            doc.error_message = (
+                f"Cancelled after {pages_completed}/{len(pages)} page(s) by user request."
+            )
+            db.commit()
+            logger.info("Document %s cancelled after %s pages", document_id, pages_completed)
+            return
 
         doc.status = DocumentStatus.failed if any_failure and not doc.observations else DocumentStatus.complete
         if any_failure:

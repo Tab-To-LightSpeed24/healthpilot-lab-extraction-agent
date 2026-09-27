@@ -5,7 +5,13 @@ from app.services.normalization import build_alias_index, lookup_exact
 
 def test_load_loinc_records_are_well_formed():
     records = load_loinc_records()
-    assert len(records) >= 50000, "the full Laboratory/ACTIVE LOINC table should have tens of thousands of codes"
+    # The CSV is built with --core-only (COMMON_TEST_RANK > 0), targeting
+    # LOINC's ~18k ranked laboratory codes rather than the full ~62k table.
+    # 15 000 is a conservative floor that guards against accidental truncation
+    # while remaining well below the core-set's actual size.
+    assert len(records) >= 15000, (
+        "core-only loinc_lab_active.csv should have at least 15k ranked Laboratory/ACTIVE codes"
+    )
 
     seen_codes = set()
     for rec in records:
@@ -73,7 +79,8 @@ def test_seed_loinc_table_recovers_from_a_partially_seeded_prior_run(db_session)
 
     count = seed_loinc_table(db_session)  # must not raise
 
-    assert count >= 50000
+    # See test_load_loinc_records_are_well_formed for why 15k, not 50k.
+    assert count >= 15000
     assert db_session.query(LoincCode).count() == count
     assert db_session.query(LoincCode).filter(LoincCode.loinc_num == "FAKE-STALE-1").first() is None, (
         "the stale row from the interrupted prior run must not survive a full resync"

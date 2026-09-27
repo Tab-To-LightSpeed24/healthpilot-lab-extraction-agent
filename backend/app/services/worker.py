@@ -48,8 +48,12 @@ def recover_stuck_documents(db: Session) -> int:
     )
     for doc in stuck:
         logger.warning("Recovering stuck document %s (last heartbeat %s)", doc.id, doc.updated_at)
-        doc.status = DocumentStatus.pending
-        doc.error_message = (doc.error_message or "") + " [Recovered after an interrupted run; retrying.]"
+        if doc.cancel_requested:
+            doc.status = DocumentStatus.cancelled
+            doc.error_message = (doc.error_message or "") + " [Cancelled by user request during prior run.]"
+        else:
+            doc.status = DocumentStatus.pending
+            doc.error_message = (doc.error_message or "") + " [Recovered after an interrupted run; retrying.]"
         doc.updated_at = datetime.now(timezone.utc)
     if stuck:
         db.commit()
@@ -84,7 +88,19 @@ def _claim_next_pending(db: Session) -> str | None:
 
 def worker_loop(stop_event: threading.Event) -> None:
     logger.info("Worker loop started")
+    last_recovery = time.time()
     while not stop_event.is_set():
+        now = time.time()
+        if now - last_recovery > 60:
+            db = SessionLocal()
+            try:
+                recover_stuck_documents(db)
+            except Exception:
+                logger.exception("Error running periodic stuck documents recovery")
+            finally:
+                db.close()
+            last_recovery = now
+
         db = SessionLocal()
         try:
             document_id = _claim_next_pending(db)

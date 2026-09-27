@@ -129,12 +129,14 @@ async function loadReports() {
       const div = document.createElement("div");
       div.className = "flex items-center justify-between p-2.5 rounded-lg hover:bg-stone-50 cursor-pointer border " +
         (r.id === currentDocId ? "border-[#0d3a2e]/30 bg-[#0d3a2e]/5" : "border-transparent");
+      const isCancelling = r.cancel_requested && r.status === "processing";
+      const displayStatus = isCancelling ? "cancelling" : r.status;
       div.innerHTML = `
         <div class="truncate">
           <div class="truncate font-medium text-[13px]">${escapeHtml(r.filename)}</div>
           <div class="text-[11px] text-stone-400">${new Date(r.uploaded_at).toLocaleString()}</div>
         </div>
-        <span class="status-pill ${pillClass(r.status)} text-[10px] px-2 py-0.5 rounded-full shrink-0 ml-2">${r.status}</span>
+        <span class="status-pill ${pillClass(displayStatus)} text-[10px] px-2 py-0.5 rounded-full shrink-0 ml-2">${displayStatus}</span>
       `;
       div.addEventListener("click", () => selectReport(r.id));
       reportsList.appendChild(div);
@@ -148,14 +150,14 @@ async function loadReports() {
 function renderStats(reports) {
   const total = reports.length;
   const complete = reports.filter((r) => r.status === "complete").length;
-  const processing = reports.filter((r) => r.status === "pending" || r.status === "processing").length;
-  const failed = reports.filter((r) => r.status === "failed").length;
+  const processing = reports.filter((r) => (r.status === "pending" || r.status === "processing") && !r.cancel_requested).length;
+  const failed = reports.filter((r) => r.status === "failed" || r.status === "cancelled").length;
 
   const cards = [
     { label: "Reports uploaded", value: total, accent: "#0d3a2e" },
     { label: "Fully processed", value: complete, accent: "#16a34a" },
     { label: "In progress", value: processing, accent: "#0ea5e9" },
-    { label: "Failed", value: failed, accent: "#dc2626" },
+    { label: "Failed / Cancelled", value: failed, accent: "#dc2626" },
   ];
   statsStrip.innerHTML = cards
     .map(
@@ -177,7 +179,7 @@ async function selectReport(docId) {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     const doc = await refreshDetail();
-    if (doc && (doc.status === "complete" || doc.status === "failed")) {
+    if (doc && (doc.status === "complete" || doc.status === "failed" || doc.status === "cancelled")) {
       clearInterval(pollTimer);
       loadReports();
     }
@@ -284,14 +286,15 @@ observationCards.addEventListener("click", async (e) => {
 cancelBtn.addEventListener("click", async () => {
   if (!currentDocId) return;
   cancelBtn.disabled = true;
+  cancelBtn.textContent = "Cancelling...";
   try {
     await api(`/reports/${currentDocId}/cancel`, { method: "POST" });
     await refreshDetail();
     await loadReports();
   } catch (e) {
     alert(`Cancel failed: ${e.message}`);
-  } finally {
     cancelBtn.disabled = false;
+    cancelBtn.textContent = "Cancel";
   }
 });
 
@@ -300,9 +303,25 @@ async function refreshDetail() {
     const doc = await api(`/reports/${currentDocId}`);
     detailFilename.textContent = doc.filename;
     detailMeta.textContent = `${doc.num_pages} page(s) &middot; uploaded ${new Date(doc.uploaded_at).toLocaleString()}${doc.error_message ? " &middot; " + doc.error_message : ""}`.replace(/&middot;/g, "·");
-    detailStatusBadge.textContent = doc.status;
-    detailStatusBadge.className = `status-pill text-xs px-2.5 py-1 rounded-full ${pillClass(doc.status)}`;
-    cancelBtn.classList.toggle("hidden", !CANCELLABLE_STATUSES.has(doc.status));
+
+    const isCancelling = doc.cancel_requested && doc.status === "processing";
+    const displayStatus = isCancelling ? "cancelling" : doc.status;
+    detailStatusBadge.textContent = displayStatus;
+    detailStatusBadge.className = `status-pill text-xs px-2.5 py-1 rounded-full ${pillClass(displayStatus)}`;
+
+    if (doc.status === "cancelled") {
+      cancelBtn.classList.add("hidden");
+    } else if (isCancelling) {
+      cancelBtn.classList.remove("hidden");
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = "Cancelling...";
+    } else if (CANCELLABLE_STATUSES.has(doc.status)) {
+      cancelBtn.classList.remove("hidden");
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = "Cancel";
+    } else {
+      cancelBtn.classList.add("hidden");
+    }
 
     renderQualityChips(doc.quality);
 

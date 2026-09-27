@@ -37,6 +37,7 @@ class DocumentOut(BaseModel):
     uploaded_at: datetime
     num_pages: int
     status: str
+    cancel_requested: bool = False
     error_message: Optional[str]
 
 

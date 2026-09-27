@@ -311,6 +311,44 @@ def test_cancel_already_complete_document_is_rejected(client):
     assert resp.status_code == 409
 
 
+def test_cancel_requested_flag_serialized_in_api(client):
+    pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL")
+    doc_id = client.post("/reports", files={"file": ("cbc.pdf", pdf_bytes, "application/pdf")}).json()["id"]
+
+    cancel_resp = client.post(f"/reports/{doc_id}/cancel")
+    assert cancel_resp.status_code == 200
+    assert cancel_resp.json()["cancel_requested"] is True
+
+    detail_resp = client.get(f"/reports/{doc_id}")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["cancel_requested"] is True
+
+
+def test_cancel_single_page_document_mid_processing_is_cancelled_not_complete(client):
+    pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL")
+    doc_id = client.post("/reports", files={"file": ("cbc.pdf", pdf_bytes, "application/pdf")}).json()["id"]
+
+    def fake_extract_and_cancel(image_png, text_layer):
+        cancel_session = client.test_session_factory()
+        try:
+            from app.models.document import Document
+            cancel_session.query(Document).filter(Document.id == doc_id).update({"cancel_requested": True})
+            cancel_session.commit()
+        finally:
+            cancel_session.close()
+        return PageExtractionResult(
+            tests=[ExtractedTest(original_test_name="Hgb", value="13.5", unit="g/dL", extraction_confidence=0.9)],
+            page_notes=None,
+        )
+
+    with patch("app.services.pipeline.gemini_client.extract_page", side_effect=fake_extract_and_cancel):
+        process_pending(client, doc_id)
+
+    detail = client.get(f"/reports/{doc_id}").json()
+    assert detail["status"] == "cancelled"
+    assert "Cancelled after" in detail["error_message"]
+
+
 def test_batch_upload_enqueues_all_files(client):
     pdf1 = _make_pdf_bytes("Hgb 13.5 g/dL")
     pdf2 = _make_pdf_bytes("Glucose 95 mg/dL")

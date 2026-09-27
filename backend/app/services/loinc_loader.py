@@ -1,5 +1,6 @@
 import csv
 import json
+import logging
 from pathlib import Path
 from typing import Iterator
 
@@ -7,6 +8,8 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.loinc import LoincCode, LoincAlias
+
+logger = logging.getLogger(__name__)
 from app.services.normalization import build_alias_index, _clean
 
 DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "loinc_lab_active.csv"
@@ -125,11 +128,17 @@ def seed_loinc_table(db: Session) -> int:
     or corrupted) still triggers a full resync exactly as before, so the
     original correctness guarantee is unchanged; only the redundant-reseed
     cost on top of it is."""
+    logger.info("Checking LOINC table...")
     expected_codes, expected_aliases = _count_source_rows()
     actual_codes = db.query(LoincCode).count()
     actual_aliases = db.query(LoincAlias).count()
     if actual_codes == expected_codes and actual_aliases == expected_aliases:
+        logger.info("LOINC table already up-to-date (%s codes, %s aliases)", actual_codes, actual_aliases)
         return actual_codes
+    logger.info(
+        "LOINC table mismatch (db: %s codes / %s aliases, csv: %s codes / %s aliases). Reseeding...",
+        actual_codes, actual_aliases, expected_codes, expected_aliases,
+    )
 
     dialect = db.get_bind().dialect.name
     if dialect == "sqlite":
@@ -142,6 +151,7 @@ def seed_loinc_table(db: Session) -> int:
     db.commit()
 
     code_buffer: list[dict] = []
+    codes_inserted = 0
     for rec in _iter_loinc_rows():
         code_buffer.append({
             "loinc_num": rec["loinc_num"],
@@ -157,19 +167,26 @@ def seed_loinc_table(db: Session) -> int:
             "example_units": rec.get("example_units"),
             "common_test_rank": rec.get("common_test_rank") or 0,
         })
+        codes_inserted += 1
         if len(code_buffer) >= CHUNK_SIZE:
             _flush(db, LoincCode, code_buffer)
+            logger.info("  ... %s LOINC codes inserted", codes_inserted)
     _flush(db, LoincCode, code_buffer)
+    logger.info("LOINC codes done: %s rows", codes_inserted)
 
     total = 0
     alias_buffer: list[dict] = []
+    aliases_inserted = 0
     for rec in _iter_loinc_rows():
         total += 1
         for alias in rec["aliases"]:
             alias_buffer.append({"loinc_num": rec["loinc_num"], "alias": alias})
+            aliases_inserted += 1
             if len(alias_buffer) >= CHUNK_SIZE:
                 _flush(db, LoincAlias, alias_buffer)
+                logger.info("  ... %s LOINC aliases inserted", aliases_inserted)
     _flush(db, LoincAlias, alias_buffer)
+    logger.info("LOINC aliases done: %s rows. Seeding complete.", aliases_inserted)
 
     return total
 

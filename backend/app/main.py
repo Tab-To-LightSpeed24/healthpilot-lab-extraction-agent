@@ -66,13 +66,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+cors_kwargs = {
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if settings.cors_origins.strip() == "*":
+    # Under W3C CORS spec, Access-Control-Allow-Origin cannot be literal "*" when
+    # credentials mode is true. Setting allow_origin_regex dynamically echoes the
+    # caller's Origin header in Access-Control-Allow-Origin.
+    cors_kwargs["allow_origin_regex"] = r"^https?://.*"
+    cors_kwargs["allow_credentials"] = True
+else:
+    cors_kwargs["allow_origins"] = settings.cors_origins_list
+    cors_kwargs["allow_credentials"] = True
+
+app.add_middleware(CORSMiddleware, **cors_kwargs)
 
 
 @app.get("/health")

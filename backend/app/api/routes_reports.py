@@ -109,6 +109,7 @@ def cancel_report(document_id: str, db: Session = Depends(get_db)):
         # Never claimed by the worker yet -- cancel immediately, no need to
         # wait for a cooperative check that will never run.
         doc.status = DocumentStatus.cancelled
+        doc.cancel_requested = True
         doc.error_message = "Cancelled by user request before processing started."
     else:
         # Already claimed and running: the worker checks this flag between
