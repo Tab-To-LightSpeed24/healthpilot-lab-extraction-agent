@@ -3,151 +3,101 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>HealthPilot &mdash; Lab Extraction &amp; LOINC Coding</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🩺</text></svg>">
-<script src="https://cdn.tailwindcss.com"></script>
+<meta name="theme-color" content="#060c0a" />
+<title>HealthPilot — Lab Extraction &amp; LOINC Coding</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --ink: #14231f;
-    --paper: #f6f5f1;
-  }
-  body { font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; background: var(--paper); color: var(--ink); }
-  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
-
-  .status-pill { display:inline-flex; align-items:center; gap:.35rem; font-weight:600; }
-  .status-pill::before { content:''; width:6px; height:6px; border-radius:999px; display:inline-block; }
-
-  .pill-confirmed { background:#e8f5ef; color:#0f6b45; }
-  .pill-confirmed::before { background:#16a34a; }
-  .pill-needs_review { background:#fdf3e2; color:#92600a; }
-  .pill-needs_review::before { background:#d97706; }
-  .pill-unmapped { background:#fbe9ea; color:#9f1d2b; }
-  .pill-unmapped::before { background:#dc2626; }
-
-  .pill-pending { background:#eceae3; color:#57534e; }
-  .pill-pending::before { background:#a8a29e; }
-  .pill-processing { background:#e6f0f7; color:#155e8a; }
-  .pill-processing::before { background:#0ea5e9; }
-  .pill-cancelling { background:#fef3c7; color:#92400e; }
-  .pill-cancelling::before { background:#f59e0b; }
-  .pill-complete { background:#e8f5ef; color:#0f6b45; }
-  .pill-complete::before { background:#16a34a; }
-  .pill-failed { background:#fbe9ea; color:#9f1d2b; }
-  .pill-failed::before { background:#dc2626; }
-  .pill-cancelled { background:#eceae3; color:#57534e; }
-  .pill-cancelled::before { background:#a8a29e; }
-
-  .row-confirmed { border-left: 3px solid #16a34a; }
-  .row-needs_review { border-left: 3px solid #d97706; }
-  .row-unmapped { border-left: 3px solid #dc2626; }
-
-  .card { background:#fffdf9; border:1px solid #e7e4db; border-radius:1rem; }
-  .brandmark { background: radial-gradient(120% 120% at 20% 20%, #14785c 0%, #0d3a2e 100%); }
-
-  ::-webkit-scrollbar { width:8px; height:8px; }
-  ::-webkit-scrollbar-thumb { background:#d8d4c8; border-radius:999px; }
-
-  .tab-btn { border-bottom:2px solid transparent; }
-  .tab-btn.active { border-bottom-color:#0d3a2e; color:#0d3a2e; font-weight:600; }
-
-  pre.json-view { background:#0d1912; color:#d7ecdf; border-radius:.75rem; }
-</style>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css" />
 </head>
-<body class="min-h-screen">
+<body>
+<div class="aurora" aria-hidden="true"><i></i><i></i><i></i></div>
 
-<header class="border-b border-[#e7e4db] bg-[#fffdf9]/90 backdrop-blur sticky top-0 z-10">
-  <div class="max-w-7xl mx-auto px-5 py-3 flex flex-wrap items-center justify-between gap-3">
-    <div class="flex items-center gap-3">
-      <div class="brandmark w-9 h-9 rounded-xl flex items-center justify-center text-white font-bold text-sm shrink-0">HP</div>
-      <div>
-        <h1 class="text-[15px] font-bold tracking-tight leading-none">HealthPilot Lab Agent</h1>
-        <p class="text-[11px] text-stone-500 mt-0.5">extraction &rarr; normalization &rarr; LOINC mapping &rarr; storage</p>
-      </div>
+<div class="shell">
+  <header class="header">
+    <button class="btn btn-ghost btn-icon" id="navToggle" aria-label="Toggle reports list" title="Toggle reports list"></button>
+    <div class="brand">
+      <div class="mark">HP</div>
+      <div class="brand-text"><b>HealthPilot</b><span>Lab extraction &amp; LOINC coding</span></div>
     </div>
-  </div>
-</header>
+    <div class="spacer"></div>
+    <div class="stats" id="stats" aria-label="Summary"></div>
+    <button class="btn btn-outline" id="lookupBtn" title="Search the LOINC terminology (Ctrl+K)"></button>
+    <button class="btn btn-primary" id="uploadBtn"></button>
+  </header>
 
-<div id="backendStatusBanner" class="hidden bg-amber-50 border-b border-amber-200 text-amber-900 text-xs px-5 py-2 text-center"></div>
+  <div class="netbar" id="netBar" hidden></div>
 
-<main class="max-w-7xl mx-auto px-5 py-6 space-y-6">
-
-  <section id="statsStrip" class="grid grid-cols-2 md:grid-cols-4 gap-3"></section>
-
-  <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-    <section class="lg:col-span-4 space-y-5">
-      <div class="card p-5">
-        <h2 class="text-sm font-bold tracking-tight mb-3">Upload a report</h2>
-        <form id="uploadForm" class="space-y-3">
-          <label class="flex flex-col items-center justify-center gap-1 border-2 border-dashed border-[#e7e4db] rounded-xl py-6 cursor-pointer hover:border-[#0d3a2e]/40 transition-colors">
-            <span class="text-2xl">&#128196;</span>
-            <span class="text-xs text-stone-500" id="fileLabel">PDF, PNG, JPG, or TXT &middot; select multiple for batch</span>
-            <input id="fileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt" class="hidden" multiple required />
-          </label>
-          <button type="submit" id="uploadBtn"
-            class="w-full bg-[#0d3a2e] text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-[#0a2e25] disabled:opacity-50 transition-colors">
-            Upload &amp; Process
-          </button>
-        </form>
-        <p id="uploadStatus" class="text-xs text-stone-500 mt-2"></p>
-      </div>
-
-      <div class="card p-5">
-        <h2 class="text-sm font-bold tracking-tight mb-3">Reports</h2>
-        <div id="reportsList" class="space-y-1.5 max-h-[50vh] overflow-y-auto text-sm"></div>
-      </div>
-
-      <div class="card p-5">
-        <h2 class="text-sm font-bold tracking-tight mb-2">Terminology search</h2>
-        <input id="loincSearchInput" type="text" placeholder="e.g. glucose, TSH, 2345-7"
-          class="w-full border border-[#e7e4db] rounded-lg px-3 py-2 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-[#0d3a2e]/20" />
-        <div id="loincSearchResults" class="text-xs space-y-1 max-h-48 overflow-y-auto"></div>
-      </div>
-    </section>
-
-    <section class="lg:col-span-8">
-      <div class="card p-5 min-h-[420px]">
-        <div id="detailEmpty" class="h-full flex items-center justify-center text-stone-400 text-sm py-24">
-          Select a report to view extracted observations.
-        </div>
-        <div id="detailContent" class="hidden">
-          <div class="flex items-start justify-between mb-2 gap-3">
-            <div>
-              <h2 id="detailFilename" class="font-bold tracking-tight"></h2>
-              <p id="detailMeta" class="text-xs text-stone-500 mt-0.5"></p>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-              <button id="cancelBtn" class="hidden text-xs border border-rose-200 text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg hover:bg-rose-100 font-medium">Cancel</button>
-              <span id="detailStatusBadge" class="status-pill text-xs px-2.5 py-1 rounded-full"></span>
-            </div>
-          </div>
-
-          <div id="qualityChips" class="flex flex-wrap gap-2 mb-4 text-[11px]"></div>
-
-          <div class="flex items-center gap-4 border-b border-[#e7e4db] mb-4 text-sm">
-            <button class="tab-btn active py-2 px-1" data-tab="clinical">Clinical view</button>
-            <button class="tab-btn py-2 px-1" data-tab="fhir">FHIR bundle</button>
-          </div>
-
-          <div id="clinicalTab">
-            <div id="observationCards" class="space-y-2"></div>
-          </div>
-
-          <div id="fhirTab" class="hidden">
-            <div class="flex justify-end mb-2">
-              <button id="copyFhirBtn" class="text-xs border border-[#e7e4db] rounded-lg px-2.5 py-1 hover:bg-stone-50">Copy JSON</button>
-            </div>
-            <pre id="fhirJson" class="json-view mono text-xs p-4 overflow-auto max-h-[60vh]"></pre>
-          </div>
+  <div class="app">
+    <aside class="sidebar" id="sidebar" aria-label="Reports">
+      <div class="side-head">
+        <div class="side-title"><h2>Reports <span id="repCount"></span></h2></div>
+        <div class="search" id="repSearchWrap"><input class="input" id="repSearch" type="search" placeholder="Search reports…" aria-label="Search reports" autocomplete="off" /></div>
+        <div class="seg" id="repFilter" role="group" aria-label="Filter reports">
+          <button data-f="all" aria-pressed="true">All</button>
+          <button data-f="active" aria-pressed="false">Active</button>
+          <button data-f="done" aria-pressed="false">Done</button>
+          <button data-f="issues" aria-pressed="false">Issues</button>
         </div>
       </div>
-    </section>
+      <div class="list" id="repList" role="list"></div>
+    </aside>
+    <div class="backdrop-nav" id="navBackdrop"></div>
 
+    <main class="workspace" id="workspace">
+      <section id="welcome" class="welcome"></section>
+
+      <div class="ws-content" id="wsContent" hidden data-pane="results">
+        <div class="ws-head">
+          <div class="title">
+            <span class="rep-ico" id="wsIco"></span>
+            <div><h1 id="wsTitle"></h1><div class="sub" id="wsSub"></div></div>
+            <span id="wsStatus"></span>
+          </div>
+          <div class="ws-actions" id="wsActions"></div>
+        </div>
+        <div class="banners" id="banners"></div>
+        <div class="pane-switch"><div class="seg" id="paneSwitch" role="tablist">
+          <button data-pane="viewer" role="tab">Document</button>
+          <button data-pane="results" role="tab" aria-selected="true">Results</button>
+        </div></div>
+
+        <div class="split" id="split">
+          <section class="pane viewer" id="viewerPane" aria-label="Original document">
+            <div class="pane-bar viewer-bar" id="viewerBar"></div>
+            <div class="pane-body viewer-body" id="viewerBody" tabindex="0"></div>
+          </section>
+          <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize document and results panels"></div>
+          <section class="pane results" id="resultsPane" aria-label="Extracted results">
+            <div class="pane-bar">
+              <div class="tabs" role="tablist" id="tabs">
+                <button role="tab" data-tab="results" aria-selected="true">Results <span class="count" id="cntResults">0</span></button>
+                <button role="tab" data-tab="fhir" aria-selected="false">FHIR</button>
+              </div>
+              <span style="margin-left:auto" id="resBarExtra"></span>
+            </div>
+            <div class="pane-body" id="resBody">
+              <div id="resView">
+                <div id="liveHost" hidden></div>
+                <div class="so-far" id="soFar" hidden></div>
+                <div id="resTools" hidden></div>
+                <div id="addHost"></div>
+                <div class="cards" id="cards"></div>
+                <div id="resEmpty"></div>
+              </div>
+              <div id="fhirWrap" hidden>
+                <div class="res-tools" style="justify-content:flex-end"><button class="btn btn-outline btn-sm" id="copyFhir"></button></div>
+                <pre class="fhir" id="fhirView"></pre>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
   </div>
-</main>
+</div>
 
-<script src="js/app.js"></script>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

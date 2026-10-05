@@ -137,8 +137,8 @@ def test_full_upload_to_observation_flow_with_mocked_extraction(client):
 
     pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL\nGlucose 95 mg/dL")
 
-    with patch("app.services.pipeline.gemini_client.extract_page", return_value=fake_result), \
-         patch("app.services.loinc_mapping.gemini_client.verify_mapping") as mock_verify:
+    with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result), \
+         patch("app.services.loinc_mapping.llm_client.verify_mapping") as mock_verify:
         mock_verify.return_value = {
             "chosen_loinc_num": "2345-7",
             "confidence": 0.93,
@@ -188,7 +188,7 @@ def test_document_not_found_returns_404(client):
 
 def test_extraction_failure_marks_document_failed_not_silently_complete(client):
     pdf_bytes = _make_pdf_bytes("Some page")
-    with patch("app.services.pipeline.gemini_client.extract_page", side_effect=RuntimeError("Gemini API error")):
+    with patch("app.services.pipeline.llm_client.extract_page", side_effect=RuntimeError("LLM API error")):
         upload_resp = client.post(
             "/reports",
             files={"file": ("bad.pdf", pdf_bytes, "application/pdf")},
@@ -199,7 +199,7 @@ def test_extraction_failure_marks_document_failed_not_silently_complete(client):
     assert detail["status"] == "failed"
     assert detail["observations"] == []
     assert detail["error_message"], "a failed document must surface why, not silently show error_message=null"
-    assert "Gemini API error" in detail["error_message"]
+    assert "LLM API error" in detail["error_message"]
 
 
 def test_fhir_bundle_endpoint_reflects_real_mapping_state(client):
@@ -211,7 +211,7 @@ def test_fhir_bundle_endpoint_reflects_real_mapping_state(client):
     )
     pdf_bytes = _make_pdf_bytes("Hgb 13.5 gm/dl")
 
-    with patch("app.services.pipeline.gemini_client.extract_page", return_value=fake_result):
+    with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result):
         upload_resp = client.post("/reports", files={"file": ("cbc.pdf", pdf_bytes, "application/pdf")})
         doc_id = upload_resp.json()["id"]
         process_pending(client, doc_id)
@@ -288,7 +288,7 @@ def test_cancel_processing_document_stops_pipeline_between_pages(client):
             page_notes=None,
         )
 
-    with patch("app.services.pipeline.gemini_client.extract_page", side_effect=fake_extract):
+    with patch("app.services.pipeline.llm_client.extract_page", side_effect=fake_extract):
         process_pending(client, doc_id)
 
     detail = client.get(f"/reports/{doc_id}").json()
@@ -303,7 +303,7 @@ def test_cancel_already_complete_document_is_rejected(client):
         page_notes=None,
     )
     pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL")
-    with patch("app.services.pipeline.gemini_client.extract_page", return_value=fake_result):
+    with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result):
         doc_id = client.post("/reports", files={"file": ("cbc.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)
 
@@ -341,7 +341,7 @@ def test_cancel_single_page_document_mid_processing_is_cancelled_not_complete(cl
             page_notes=None,
         )
 
-    with patch("app.services.pipeline.gemini_client.extract_page", side_effect=fake_extract_and_cancel):
+    with patch("app.services.pipeline.llm_client.extract_page", side_effect=fake_extract_and_cancel):
         process_pending(client, doc_id)
 
     detail = client.get(f"/reports/{doc_id}").json()
@@ -391,8 +391,8 @@ def test_human_review_confirms_a_correct_loinc_code(client):
         page_notes=None,
     )
     pdf_bytes = _make_pdf_bytes("Some Odd Assay 1.0")
-    with patch("app.services.pipeline.gemini_client.extract_page", return_value=fake_result), \
-         patch("app.services.loinc_mapping.gemini_client.verify_mapping",
+    with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result), \
+         patch("app.services.loinc_mapping.llm_client.verify_mapping",
                return_value={"chosen_loinc_num": None, "confidence": 0.1, "rationale": "no match"}):
         doc_id = client.post("/reports", files={"file": ("odd.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)
@@ -414,7 +414,7 @@ def test_human_review_rejects_a_fake_loinc_code(client):
         page_notes=None,
     )
     pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL")
-    with patch("app.services.pipeline.gemini_client.extract_page", return_value=fake_result):
+    with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result):
         doc_id = client.post("/reports", files={"file": ("cbc.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)
 
@@ -431,8 +431,8 @@ def test_human_review_can_confirm_genuinely_unmapped(client):
         page_notes=None,
     )
     pdf_bytes = _make_pdf_bytes("Some Odd Assay 1.0")
-    with patch("app.services.pipeline.gemini_client.extract_page", return_value=fake_result), \
-         patch("app.services.loinc_mapping.gemini_client.verify_mapping",
+    with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result), \
+         patch("app.services.loinc_mapping.llm_client.verify_mapping",
                return_value={"chosen_loinc_num": None, "confidence": 0.1, "rationale": "no match"}):
         doc_id = client.post("/reports", files={"file": ("odd.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)
@@ -452,7 +452,7 @@ def test_human_review_requires_code_unless_confirming_unmapped(client):
         page_notes=None,
     )
     pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL")
-    with patch("app.services.pipeline.gemini_client.extract_page", return_value=fake_result):
+    with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result):
         doc_id = client.post("/reports", files={"file": ("cbc.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)
 
@@ -470,8 +470,8 @@ def test_quality_summary_reports_review_counts(client):
         page_notes=None,
     )
     pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL\nTotally Unknown Thing 1")
-    with patch("app.services.pipeline.gemini_client.extract_page", return_value=fake_result), \
-         patch("app.services.loinc_mapping.gemini_client.verify_mapping",
+    with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result), \
+         patch("app.services.loinc_mapping.llm_client.verify_mapping",
                return_value={"chosen_loinc_num": None, "confidence": 0.0, "rationale": "no match"}):
         doc_id = client.post("/reports", files={"file": ("cbc.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)

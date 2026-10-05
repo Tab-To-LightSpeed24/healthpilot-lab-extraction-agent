@@ -15,3 +15,6 @@ node_modules/
 
 # Separate project of yours, not part of this submission
 /medical data pipeline project/
+
+# Regenerate with: python backend/scripts/generate_scan_fixtures.py
+/eval/sample_reports/scans/

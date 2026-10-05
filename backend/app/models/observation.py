@@ -12,7 +12,9 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     JSON,
+    Boolean,
 )
+import sqlalchemy as sa
 from sqlalchemy.orm import relationship
 
 from app.core.db import Base
@@ -47,6 +49,18 @@ class Observation(Base):
     mapping_confidence = Column(Float, nullable=True)
     mapping_stage = Column(String(32), nullable=True)  # alias_exact | embedding_llm | none
     mapping_rationale = Column(Text, nullable=True)
+
+    # Provenance: "llm" (model-extracted), "fallback" (local rule-based
+    # parser, lower accuracy), or "manual" (row added by a user). `is_edited`
+    # flips to True once a user corrects any field of an extracted row.
+    extraction_source = Column(String(16), nullable=False, default="llm", server_default="llm")
+    is_edited = Column(Boolean, nullable=False, default=False, server_default=sa.false())
+
+    # Local validation findings (e.g. "possible lost decimal point") and, for
+    # that case, the value it suggests. The stored `value` is never changed
+    # automatically; a user applies the suggestion explicitly.
+    validation_notes = Column(JSON, nullable=True)
+    suggested_value = Column(String(128), nullable=True)
 
     extraction_confidence = Column(Float, nullable=True)
     raw_extraction = Column(JSON, nullable=True)

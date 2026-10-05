@@ -20,6 +20,7 @@ class PageContent:
 
 
 IMAGE_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png"}
+DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 def load_pages(raw_content: bytes, content_type: str) -> List[PageContent]:
@@ -30,10 +31,49 @@ def load_pages(raw_content: bytes, content_type: str) -> List[PageContent]:
     if content_type == "application/pdf" or content_type == "application/octet-stream":
         return _pages_from_pdf(raw_content)
 
+    if content_type == DOCX_CONTENT_TYPE:
+        return [_page_from_docx(raw_content)]
+
     if content_type.startswith("text/"):
         return [PageContent(page_number=1, text=raw_content.decode("utf-8", errors="ignore"), image_png=b"")]
 
     raise ValueError(f"Unsupported content type: {content_type}")
+
+
+def _page_from_docx(raw_content: bytes) -> PageContent:
+    """A Word document has no fixed pages or page image, so it becomes one
+    text "page": paragraphs in order, with each table row flattened to one
+    line whose cells are separated by wide gaps (the same shape a padded
+    text report has, so the table-row parser handles it unchanged)."""
+    import io
+
+    from docx import Document as DocxDocument
+    from docx.table import Table
+    from docx.text.paragraph import Paragraph
+
+    try:
+        doc = DocxDocument(io.BytesIO(raw_content))
+    except Exception as exc:
+        raise ValueError(f"could not read the .docx file: {exc}") from exc
+
+    lines = []
+    for child in doc.element.body.iterchildren():
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "p":
+            text = Paragraph(child, doc).text.strip()
+            if text:
+                lines.append(text)
+        elif tag == "tbl":
+            for row in Table(child, doc).rows:
+                cells, previous = [], None
+                for cell in row.cells:
+                    text = " ".join(cell.text.split())
+                    if text and cell._tc is not previous:  # merged cells repeat the same element
+                        cells.append(text)
+                    previous = cell._tc
+                if cells:
+                    lines.append("    ".join(cells))
+    return PageContent(page_number=1, text="\n".join(lines) or None, image_png=b"")
 
 
 def _page_from_image(raw_content: bytes, filetype: str) -> PageContent:

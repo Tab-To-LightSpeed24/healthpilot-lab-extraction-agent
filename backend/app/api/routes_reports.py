@@ -1,8 +1,9 @@
-from typing import List
+from typing import List, Tuple
+from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
-from fastapi.responses import JSONResponse
-from sqlalchemy.orm import Session
+from fastapi.responses import JSONResponse, Response
+from sqlalchemy.orm import Session, defer
 
 from app.core.config import settings
 from app.core.db import get_db
@@ -10,6 +11,7 @@ from app.models.document import Document, DocumentStatus
 from app.models.observation import Observation
 from app.schemas.api import DocumentOut, DocumentDetailOut, QualitySummary
 from app.services.fhir_export import build_fhir_bundle
+from app.services.pdf_utils import DOCX_CONTENT_TYPE
 from app.services.quality import compute_quality_flags
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -20,14 +22,37 @@ ACCEPTED_CONTENT_TYPES = {
     "image/jpg",
     "image/png",
     "text/plain",
+    DOCX_CONTENT_TYPE,
+}
+
+# Browsers/clients often label an upload application/octet-stream (or nothing);
+# the extension is then the only reliable signal.
+_EXTENSION_TYPES = {
+    ".pdf": "application/pdf",
+    ".docx": DOCX_CONTENT_TYPE,
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".txt": "text/plain",
 }
 
 
-async def _read_and_validate(file: UploadFile) -> bytes:
-    if file.content_type not in ACCEPTED_CONTENT_TYPES:
+def _resolve_content_type(file: UploadFile) -> str:
+    declared = (file.content_type or "").lower()
+    if declared in ("", "application/octet-stream"):
+        name = (file.filename or "").lower()
+        for ext, ctype in _EXTENSION_TYPES.items():
+            if name.endswith(ext):
+                return ctype
+    return file.content_type
+
+
+async def _read_and_validate(file: UploadFile) -> Tuple[bytes, str]:
+    content_type = _resolve_content_type(file)
+    if content_type not in ACCEPTED_CONTENT_TYPES:
         raise HTTPException(
             status_code=415,
-            detail=f"Unsupported content type '{file.content_type}'. Accepted: {sorted(ACCEPTED_CONTENT_TYPES)}",
+            detail=f"Unsupported content type '{content_type}'. Accepted: {sorted(ACCEPTED_CONTENT_TYPES)}",
         )
     raw = await file.read()
     max_bytes = settings.max_upload_mb * 1024 * 1024
@@ -35,12 +60,12 @@ async def _read_and_validate(file: UploadFile) -> bytes:
         raise HTTPException(status_code=413, detail=f"File exceeds {settings.max_upload_mb}MB limit.")
     if len(raw) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-    return raw
+    return raw, content_type
 
 
 @router.post("", response_model=DocumentOut, status_code=201)
 async def upload_report(file: UploadFile = File(...), db: Session = Depends(get_db)):
-    raw = await _read_and_validate(file)
+    raw, content_type = await _read_and_validate(file)
 
     # Just enqueue: status=pending is picked up by the background worker
     # (app/services/worker.py), not fired directly from the request. This is
@@ -50,7 +75,7 @@ async def upload_report(file: UploadFile = File(...), db: Session = Depends(get_
     # of the job vanishing with whatever process happened to be handling it.
     doc = Document(
         filename=file.filename or "unnamed",
-        content_type=file.content_type,
+        content_type=content_type,
         raw_content=raw,
         status=DocumentStatus.pending,
     )
@@ -71,8 +96,8 @@ async def upload_reports_batch(files: List[UploadFile] = File(...), db: Session 
     validated = [(f, await _read_and_validate(f)) for f in files]
 
     docs = [
-        Document(filename=f.filename or "unnamed", content_type=f.content_type, raw_content=raw, status=DocumentStatus.pending)
-        for f, raw in validated
+        Document(filename=f.filename or "unnamed", content_type=ctype, raw_content=raw, status=DocumentStatus.pending)
+        for f, (raw, ctype) in validated
     ]
     db.add_all(docs)
     db.commit()
@@ -83,17 +108,50 @@ async def upload_reports_batch(files: List[UploadFile] = File(...), db: Session 
 
 @router.get("", response_model=List[DocumentOut])
 def list_reports(db: Session = Depends(get_db)):
-    return db.query(Document).order_by(Document.uploaded_at.desc()).all()
+    # The original upload (often megabytes) is never needed for the list, and
+    # the UI polls this endpoint; deferring it keeps each poll cheap.
+    return (
+        db.query(Document)
+        .options(defer(Document.raw_content))
+        .order_by(Document.uploaded_at.desc())
+        .all()
+    )
 
 
 @router.get("/{document_id}", response_model=DocumentDetailOut)
 def get_report(document_id: str, db: Session = Depends(get_db)):
-    doc = db.query(Document).filter(Document.id == document_id).first()
+    doc = (
+        db.query(Document)
+        .options(defer(Document.raw_content))
+        .filter(Document.id == document_id)
+        .first()
+    )
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
     detail = DocumentDetailOut.model_validate(doc)
     detail.quality = QualitySummary(**compute_quality_flags(doc.observations))
     return detail
+
+
+@router.get("/{document_id}/file")
+def get_report_file(document_id: str, db: Session = Depends(get_db)):
+    """The original upload, served inline so the UI's document viewer can show
+    it next to the extracted results."""
+    row = (
+        db.query(Document.filename, Document.content_type, Document.raw_content)
+        .filter(Document.id == document_id)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return Response(
+        content=row.raw_content,
+        media_type=row.content_type,
+        headers={
+            "Content-Disposition": f"inline; filename*=UTF-8''{quote(row.filename)}",
+            "Cache-Control": "private, max-age=3600",
+        },
+    )
 
 
 @router.post("/{document_id}/cancel", response_model=DocumentOut)

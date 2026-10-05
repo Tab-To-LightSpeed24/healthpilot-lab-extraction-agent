@@ -4,6 +4,8 @@ Personal study notes: what I built, why, what broke, and how I'd talk about
 it in an interview. Written to actually understand the system, not just
 recite it.
 
+> **Note on naming:** Parts 1-5 describe events from when the extraction model was Gemini, so they refer to `gemini_client`, `GEMINI_API_KEY` and Gemini quotas. That module is now `llm_client.py` (OpenRouter, OpenAI-compatible) and the key is `OPENROUTER_API_KEY`. The accounts are kept as written because they are historically accurate.
+
 ---
 
 ## 1. The problem, in one paragraph
@@ -51,48 +53,48 @@ guess a wrong code; uncertain mappings must be flagged for human review.
 ## 3. Architecture
 
 ```
-Upload (PDF/PNG/JPG/TXT)
-   │
-   ▼
-pdf_utils.load_pages()          PyMuPDF: digital PDF → text layer + page image
-                                 scanned/image → page image only (no text layer)
-                                 plain text → text only (no image)
-   │
-   ▼
-gemini_client.extract_page()    One multimodal call PER PAGE. Sends the page
-                                 image (+ text layer if any) to Gemini with a
-                                 strict JSON schema and an explicit
-                                 "never fabricate — use null if absent" rule.
-   │
-   ▼
-normalization + loinc_mapping   3-stage:
-                                 1. Deterministic alias/synonym exact match
-                                    against curated LOINC table (free, instant)
-                                 2. Embedding similarity search → top-k candidates
-                                 3. LLM re-ranks candidates using specimen/method
-                                    context, or explicitly says "no reliable
-                                    match" → unmapped/needs_review
-   │
-   ▼
-Postgres (SQLAlchemy)           documents → observations → loinc_codes
-                                 every observation keeps document_id + page_number
-   │
-   ▼
-FastAPI REST API  ──CORS──►  Static frontend (upload form, results table,
-                              confidence/review badges)
+Upload (PDF/PNG/JPG/TXT)  ->  documents row, status=pending   (the row IS the queue)
+   |
+   v
+worker thread claims it (compare-and-swap), heartbeat, cancel checked per page
+   |
+   v
+pdf_utils.load_pages()      PDF -> text layer + page image; image -> image; text -> text
+   |
+   +--> PRIMARY   llm_client.extract_page()   OpenRouter, 1 multimodal call per page
+   |                25s/request, 45s total budget; a failure that will repeat
+   |                (timeout, credits, key, outage) stops LLM use for the document
+   |
+   +--> FALLBACK  extraction/fallback.py      no API, no key
+                    digital PDF : layout.py (reading order) -> field_parser.py
+                    plain text  : field_parser.py
+                    scanned/img : preprocessing.py -> ocr.py (Tesseract) -> field_parser.py
+                  -> validation.py  (lost decimals, garbled units, junk rows, confidence)
+   |
+   v
+normalization + loinc_mapping    stage 1 alias-exact, stage 2 lexical DB search,
+                                 stage 3 LLM re-rank (skipped in fallback mode)
+   |
+   v
+Postgres (SQLAlchemy + Alembic)  documents -> observations -> loinc_codes
+                                 observation.extraction_source: llm | fallback | manual
+   |
+   v
+FastAPI (/reports, /observations CRUD, /fhir, /cancel, /review)
+   --CORS--> static frontend: yellow "lower accuracy" banner, edit/add/delete rows
 ```
 
-### Why a multimodal LLM instead of OCR (Tesseract) + layout parsing?
+### Why LLM-first, but with a full local fallback?
 
-This is the decision I'd defend most confidently. A traditional pipeline
-would need: OCR → text → regex/layout heuristics per report format → still
-brittle across the "different labs, different layouts" problem the spec
-calls out explicitly. Instead, every page (digital, scanned, or photographed)
-gets rasterized to an image and sent to Gemini with a strict JSON schema.
-The PDF's text layer (when it exists) rides along as a cross-reference. This
-means ONE code path handles all input formats, at the cost of per-page API
-latency/cost and being dependent on the vision model's own OCR quality for
-genuinely degraded scans.
+Originally this section argued for a multimodal LLM *instead of* OCR, and that
+is still the highest-quality path for arbitrary layouts. What changed is the
+operational reality: a paid, rate-limited API as the *only* way to get output
+is a single point of failure, and it failed here (a low-credit account returned
+402 on every page). So the LLM is primary but bounded and optional, and a local
+pipeline produces output whenever it isn't available. The trade-off is explicit:
+fallback output is less accurate, so it is labelled (yellow banner, confidence
+below the 0.7 review threshold) and fully editable instead of passed off as
+authoritative.
 
 ### Why three mapping stages, not just "ask the LLM"?
 
@@ -282,27 +284,29 @@ one-shot build.
 
 ## 7. Known limitations (say these proactively, don't wait to be asked)
 
-- Curated ~65-code LOINC subset, not the full official table (needs a
-  licensed download from loinc.org — swapping it in only requires writing an
-  equivalent loader; nothing else in the pipeline changes).
-- No genuinely degraded/noisy scanned images in the eval set — only a clean
-  simulated "scan" (PNG with no text layer). Real skewed/noisy scans are the
-  next thing I'd add.
-- In-process background processing (`FastAPI BackgroundTasks`), not a
-  durable job queue — fine at this scale, first thing to swap for
-  production volume.
-- Single-tenant, no auth — explicitly out of scope per the spec's focus on
-  the extraction/mapping pipeline itself.
-- Original file stored as a DB blob, not object storage — fine for a
-  demo/internship submission, not how I'd do it at scale.
+- **Fallback accuracy is bounded.** OCR still misreads digits, mainly large
+  coloured values on complex layouts. A dropped decimal is caught only when the
+  reference range was also read; other digit errors can't be detected. Measured:
+  degraded scans 92% with preprocessing (0% without), clean scans 88%, the real
+  multi-column Apollo report as a scan 8/12 clean and 5/12 degraded.
+- Footer rows with several label columns over several value columns (e.g. ESR
+  on the Apollo report) aren't paired; graphics-heavy scans produce some junk
+  rows. The junk filter deliberately errs toward keeping rows.
+- Handwriting is out of scope.
+- OCR concurrency is 1 on purpose: memory (a large-page OCR peaks ~424 MB of a
+  512 MB instance) is the constraint, verified in a Linux container.
+- Single in-process worker thread (a real broker would be needed to scale out).
+- No LLM escalation for low-confidence local pages yet (it spends API credit).
+- Single-tenant, no auth - out of scope per the spec.
+- Original file stored as a DB blob, not object storage.
 
 ## 8. Questions I'd expect, and how I'd answer
 
-**"Why didn't you use the full LOINC table?"** Licensed download, account-
-gated, and the loader is a plug-in point — swapping it in doesn't touch the
-mapping logic, storage, or API. Given ~24h, building and testing a correct
-pipeline against a curated set beat spending hours on ETL for a bigger,
-untested one.
+**"Why didn't you use a smaller LOINC subset?"** I did initially (~65 codes),
+then replaced it with the full ~62k Laboratory/ACTIVE table. That exposed real
+ambiguity in the official data (a bare "Hgb" is a synonym for three different
+codes), which is why only unambiguous aliases auto-resolve and a small
+hand-verified override file covers the common cases.
 
 **"How do you know the LLM doesn't hallucinate a lab value?"** The
 extraction prompt explicitly forbids inventing fields and instructs the
@@ -311,12 +315,17 @@ model to return `null`/omit rather than guess; the mapping pipeline returns
 prompting, the eval run is the actual check — I scored real output against
 known-correct answers rather than trusting the prompt's instructions alone.
 
-**"What would you do with another week?"** Full LOINC table integration,
-a human-in-the-loop review UI for `needs_review`/`unmapped` items (currently
-visible but not actionable in the UI), a durable job queue, and a batch of
-real (redacted) or intentionally-degraded scanned images in the eval set.
+**"What would you do with another week?"** Escalate only low-confidence local
+pages to the LLM (the per-row confidence scores are the trigger), collect real
+degraded scans to decide whether a second OCR engine is justified, and pair the
+multi-column footer rows. I'd also add cross-upload duplicate detection.
+
+**"What happens when the AI provider is down?"** The call is bounded (25 s per
+request, 45 s total); the first failure that will repeat stops LLM use for that
+document; the rest is extracted locally and clearly flagged. Setting
+`LLM_ENABLED=false` runs with zero API calls. Users can correct any row.
 
 **"Walk me through what happens when I upload a file."** → walk the
 architecture diagram in §3, end to end, naming the actual function at each
-step (`load_pages` → `extract_page` → `map_observation` → `Observation`
-row → API response).
+step (`load_pages` → `extract_page` or the `FallbackExtractor` → `validate_tests` →
+`map_observation` → `Observation` row → API response).

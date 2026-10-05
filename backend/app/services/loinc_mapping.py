@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.loinc import LoincCode, LoincAlias
-from app.services import gemini_client
+from app.services import llm_client
 from app.services.normalization import _clean
 
 logger = logging.getLogger(__name__)
@@ -123,7 +123,12 @@ def map_observation(
     specimen: Optional[str] = None,
     method: Optional[str] = None,
     timing: Optional[str] = None,
+    use_llm: bool = True,
 ) -> dict:
+    """`use_llm=False` skips stage 3 entirely (zero API calls): deterministic
+    alias matches still confirm, everything else is left needs_review with the
+    lexical candidates offered only as unverified hints -- never auto-assigned,
+    since stage 3 is what guards against closest-string-match errors."""
     exact = alias_index.get(_clean(original_test_name))
     if exact:
         loinc = db.query(LoincCode).filter(LoincCode.loinc_num == exact["loinc_num"]).first()
@@ -154,8 +159,23 @@ def map_observation(
             "mapping_rationale": "Candidate search failed; needs manual review.",
         }
 
+    if not use_llm:
+        hints = ", ".join(f"{c['loinc_num']} ({c['long_common_name']})" for c in candidates[:3])
+        return {
+            "normalized_test_name": original_test_name,
+            "loinc_code": None,
+            "loinc_display": None,
+            "mapping_status": "needs_review",
+            "mapping_confidence": None,
+            "mapping_stage": "lexical_only",
+            "mapping_rationale": (
+                "No exact alias match and AI verification was unavailable; needs manual review."
+                + (f" Unverified suggestions: {hints}." if hints else "")
+            ),
+        }
+
     try:
-        verdict = gemini_client.verify_mapping(
+        verdict = llm_client.verify_mapping(
             original_name=original_test_name,
             normalized_name=original_test_name,
             value=value,
@@ -175,6 +195,7 @@ def map_observation(
             "mapping_confidence": None,
             "mapping_stage": "error",
             "mapping_rationale": "LLM verification call failed; needs manual review.",
+            "llm_failed": True,
         }
 
     chosen = verdict.get("chosen_loinc_num")

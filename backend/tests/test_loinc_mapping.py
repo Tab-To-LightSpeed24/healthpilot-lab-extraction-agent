@@ -8,7 +8,7 @@ def test_map_observation_alias_exact_match_needs_no_model_call(db_session):
     alias_index = get_alias_index()
 
     with patch.object(loinc_mapping, "_top_k_candidates") as mock_candidates, \
-         patch.object(loinc_mapping.gemini_client, "verify_mapping") as mock_verify:
+         patch.object(loinc_mapping.llm_client, "verify_mapping") as mock_verify:
         result = loinc_mapping.map_observation(
             db=db_session,
             alias_index=alias_index,
@@ -38,7 +38,7 @@ def test_map_observation_falls_back_to_lexical_llm_when_no_alias(db_session):
         ]
 
     with patch.object(loinc_mapping, "_top_k_candidates", side_effect=fake_top_k), \
-         patch.object(loinc_mapping.gemini_client, "verify_mapping") as mock_verify:
+         patch.object(loinc_mapping.llm_client, "verify_mapping") as mock_verify:
         mock_verify.return_value = {
             "chosen_loinc_num": "2345-7",
             "confidence": 0.9,
@@ -64,7 +64,7 @@ def test_map_observation_low_confidence_is_flagged_needs_review(db_session):
 
     with patch.object(loinc_mapping, "_top_k_candidates", return_value=[
         {"loinc_num": "2345-7", "long_common_name": "Glucose [Mass/volume] in Serum or Plasma", "component": "Glucose", "system": "Ser/Plas"},
-    ]), patch.object(loinc_mapping.gemini_client, "verify_mapping") as mock_verify:
+    ]), patch.object(loinc_mapping.llm_client, "verify_mapping") as mock_verify:
         mock_verify.return_value = {"chosen_loinc_num": "2345-7", "confidence": 0.4, "rationale": "Weak match."}
         result = loinc_mapping.map_observation(
             db=db_session,
@@ -81,7 +81,7 @@ def test_map_observation_no_reliable_candidate_is_unmapped(db_session):
 
     with patch.object(loinc_mapping, "_top_k_candidates", return_value=[
         {"loinc_num": "2345-7", "long_common_name": "Glucose [Mass/volume] in Serum or Plasma", "component": "Glucose", "system": "Ser/Plas"},
-    ]), patch.object(loinc_mapping.gemini_client, "verify_mapping") as mock_verify:
+    ]), patch.object(loinc_mapping.llm_client, "verify_mapping") as mock_verify:
         mock_verify.return_value = {"chosen_loinc_num": None, "confidence": 0.1, "rationale": "No candidate is a reliable match."}
         result = loinc_mapping.map_observation(
             db=db_session,

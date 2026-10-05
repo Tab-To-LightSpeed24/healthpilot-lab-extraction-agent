@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, String, Integer, DateTime, Enum, LargeBinary, Text
+from sqlalchemy import Boolean, Column, String, Integer, DateTime, Enum, JSON, LargeBinary, Text
 from sqlalchemy.orm import relationship
 
 from app.core.db import Base
@@ -37,6 +37,23 @@ class Document(Base):
     # be stopped without killing the process.
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     cancel_requested = Column(Boolean, nullable=False, default=False)
+
+    # True when at least one page was extracted by the local rule-based
+    # fallback instead of the LLM; the UI shows a yellow "review this"
+    # notice off this flag. `fallback_reason` is why the LLM path was
+    # skipped or abandoned (disabled, timeout, credits, ...).
+    # Live-progress feed for the UI: [{"t": iso timestamp, "msg": str, "level":
+    # "info"|"warn"|"error"}], capped by the pipeline. `pages_done` drives the
+    # progress bar.
+    progress = Column(JSON, nullable=True)
+    pages_done = Column(Integer, nullable=False, default=0, server_default="0")
+
+    @property
+    def current_step(self):
+        return (self.progress[-1]["msg"] if self.progress else None)
+
+    used_fallback = Column(Boolean, nullable=False, default=False)
+    fallback_reason = Column(Text, nullable=True)
 
     observations = relationship(
         "Observation", back_populates="document", cascade="all, delete-orphan"

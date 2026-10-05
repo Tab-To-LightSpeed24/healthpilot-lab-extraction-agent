@@ -3,10 +3,16 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.db import get_db
 from app.models.loinc import LoincCode
 from app.models.observation import MappingStatus, Observation
-from app.schemas.api import ObservationOut, ObservationReviewIn
+from app.models.document import Document
+from app.schemas.api import ObservationCreateIn, ObservationOut, ObservationReviewIn, ObservationUpdateIn
+from app.schemas.extraction import ExtractedTest
+from app.services.extraction.validation import validate_row
+from app.services.loinc_loader import get_alias_index
+from app.services.loinc_mapping import map_observation
 
 router = APIRouter(prefix="/observations", tags=["observations"])
 
@@ -32,6 +38,111 @@ def list_observations(
             | (Observation.loinc_code.ilike(like))
         )
     return query.order_by(Observation.created_at.desc()).limit(limit).all()
+
+
+def _apply_mapping(db: Session, obs: Observation) -> None:
+    """Deterministic (alias-exact) mapping only -- hand edits never call an
+    LLM. Anything without an exact alias match is left needs_review for the
+    human to resolve via the review endpoint."""
+    mapping = map_observation(
+        db=db,
+        alias_index=get_alias_index(),
+        original_test_name=obs.original_test_name,
+        value=obs.value,
+        unit=obs.unit,
+        specimen=obs.specimen,
+        method=obs.method,
+        timing=obs.timing,
+        use_llm=False,
+    )
+    obs.normalized_test_name = mapping["normalized_test_name"]
+    obs.loinc_code = mapping["loinc_code"]
+    obs.loinc_display = mapping["loinc_display"]
+    obs.mapping_status = MappingStatus(mapping["mapping_status"])
+    obs.mapping_confidence = mapping["mapping_confidence"]
+    obs.mapping_stage = mapping["mapping_stage"]
+    obs.mapping_rationale = mapping["mapping_rationale"]
+
+
+def _get_or_404(db: Session, observation_id: str) -> Observation:
+    obs = db.query(Observation).filter(Observation.id == observation_id).first()
+    if obs is None:
+        raise HTTPException(status_code=404, detail="Observation not found")
+    return obs
+
+
+@router.post("", response_model=ObservationOut, status_code=201)
+def create_observation(body: ObservationCreateIn, db: Session = Depends(get_db)):
+    if db.query(Document.id).filter(Document.id == body.document_id).first() is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    obs = Observation(
+        document_id=body.document_id,
+        page_number=body.page_number,
+        original_test_name=body.original_test_name,
+        value=body.value,
+        unit=body.unit,
+        reference_range=body.reference_range,
+        specimen=body.specimen,
+        method=body.method,
+        timing=body.timing,
+        flag=body.flag,
+        extraction_source="manual",
+        is_edited=True,
+        extraction_confidence=1.0,
+    )
+    _apply_mapping(db, obs)
+    db.add(obs)
+    db.commit()
+    db.refresh(obs)
+    return obs
+
+
+@router.get("/{observation_id}", response_model=ObservationOut)
+def get_observation(observation_id: str, db: Session = Depends(get_db)):
+    return _get_or_404(db, observation_id)
+
+
+@router.patch("/{observation_id}", response_model=ObservationOut)
+def update_observation(observation_id: str, body: ObservationUpdateIn, db: Session = Depends(get_db)):
+    obs = _get_or_404(db, observation_id)
+    changes = body.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="No fields provided to update.")
+    if "original_test_name" in changes and changes["original_test_name"] is None:
+        raise HTTPException(status_code=400, detail="original_test_name cannot be cleared.")
+
+    name_changed = "original_test_name" in changes and changes["original_test_name"] != obs.original_test_name
+    for field, new_value in changes.items():
+        setattr(obs, field, new_value)
+    obs.is_edited = True
+    # Re-validate the corrected row rather than leaving notes that describe the
+    # OLD value. A row a human has fixed and that now passes is fully trusted;
+    # one that still looks off keeps its (re-computed) flags and lower score.
+    verdict = validate_row(
+        ExtractedTest(
+            original_test_name=obs.original_test_name, value=obs.value, unit=obs.unit,
+            reference_range=obs.reference_range, flag=obs.flag,
+            extraction_confidence=settings.fallback_extraction_confidence,
+        )
+    )
+    obs.validation_notes = verdict.notes or None
+    obs.suggested_value = verdict.suggested_value
+    obs.extraction_confidence = verdict.confidence if verdict.notes else 1.0
+    # A renamed test is a different test: re-derive its code instead of
+    # leaving the old name's LOINC mapping attached. Other edits (value,
+    # unit, ...) keep the existing mapping, including a human-confirmed one.
+    if name_changed:
+        _apply_mapping(db, obs)
+    db.commit()
+    db.refresh(obs)
+    return obs
+
+
+@router.delete("/{observation_id}", status_code=204)
+def delete_observation(observation_id: str, db: Session = Depends(get_db)):
+    obs = _get_or_404(db, observation_id)
+    db.delete(obs)
+    db.commit()
 
 
 @router.patch("/{observation_id}/review", response_model=ObservationOut)

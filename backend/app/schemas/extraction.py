@@ -1,4 +1,5 @@
-"""Pydantic schemas describing the JSON we ask Gemini to return for each page.
+"""Pydantic schemas describing the JSON we ask the extraction model to return
+for each page.
 
 Kept intentionally flat and permissive (most fields nullable) because lab
 report layouts vary enormously and the model must be free to say "not
@@ -36,38 +37,17 @@ class ExtractedTest(BaseModel):
         ge=0.0, le=1.0,
         description="Model's own confidence that this row was read correctly from the page (0-1).",
     )
+    # Filled by the local validation layer (app/services/extraction/validation.py),
+    # never by the LLM.
+    validation_notes: List[str] = Field(default_factory=list)
+    suggested_value: Optional[str] = None
 
 
 class PageExtractionResult(BaseModel):
     tests: List[ExtractedTest] = Field(default_factory=list)
+    # "digital" | "text" | "ocr" for locally extracted pages; None for LLM output.
+    method: Optional[str] = None
     page_notes: Optional[str] = Field(
         default=None,
         description="Anything unusual about this page worth flagging (poor scan quality, cut-off text, etc.)",
     )
-
-
-EXTRACTION_JSON_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "tests": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "original_test_name": {"type": "string"},
-                    "value": {"type": "string", "nullable": True},
-                    "unit": {"type": "string", "nullable": True},
-                    "reference_range": {"type": "string", "nullable": True},
-                    "specimen": {"type": "string", "nullable": True},
-                    "method": {"type": "string", "nullable": True},
-                    "timing": {"type": "string", "nullable": True},
-                    "flag": {"type": "string", "nullable": True},
-                    "extraction_confidence": {"type": "number"},
-                },
-                "required": ["original_test_name", "extraction_confidence"],
-            },
-        },
-        "page_notes": {"type": "string", "nullable": True},
-    },
-    "required": ["tests"],
-}

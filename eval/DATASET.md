@@ -36,7 +36,7 @@ scanned reports or photographs of printed reports.
 
 ## Running the evaluation
 
-Requires a running backend with `GEMINI_API_KEY` set (real API calls, no mocking):
+Requires a running backend with `OPENROUTER_API_KEY` set (real API calls that spend real credit, no mocking):
 
 ```bash
 pip install -r eval/requirements.txt

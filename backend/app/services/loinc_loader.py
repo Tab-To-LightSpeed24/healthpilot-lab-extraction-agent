@@ -191,6 +191,28 @@ def seed_loinc_table(db: Session) -> int:
     return total
 
 
+_short_names_cache: set[str] | None = None
+
+
+def get_known_short_names() -> set[str]:
+    """Cleaned short test names/abbreviations (<=8 chars) drawn from EVERY
+    LOINC short name, component and alias -- including the ambiguous ones
+    get_alias_index() deliberately drops (it has no "co2" or "ph", which are
+    real, common tests). Used only to recognise that a short OCR'd label is a
+    plausible real test name, never to map it. ~8k entries, <1MB."""
+    global _short_names_cache
+    if _short_names_cache is None:
+        names: set[str] = set()
+        for rec in _iter_loinc_rows():
+            for cand in (rec["shortname"], rec["component"], *rec["aliases"]):
+                if cand and len(cand) <= 10:
+                    key = _clean(cand)
+                    if key and len(key) <= 8:
+                        names.add(key)
+        _short_names_cache = names
+    return _short_names_cache
+
+
 def load_alias_overrides() -> dict[str, str]:
     """Loads app/data/loinc_alias_overrides.json -> {cleaned alias: loinc_num}.
     See that file's own "_comment" field for why this exists."""

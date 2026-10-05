@@ -7,6 +7,8 @@ the level of "explain this to another developer," not "explain this to
 yourself" — so read it once and you should be able to talk through any of
 these unprompted.
 
+> **Note on naming:** Parts 1-5 describe events from when the extraction model was Gemini, so they refer to `gemini_client`, `GEMINI_API_KEY` and Gemini quotas. That module is now `llm_client.py` (OpenRouter, OpenAI-compatible) and the key is `OPENROUTER_API_KEY`. The accounts are kept as written because they are historically accurate.
+
 The overarching theme, if an interviewer asks "what was the hardest part":
 **almost nothing here was found by reading code carefully. Nearly everything
 was found by running something real** — a test, a real deploy, a real API
@@ -400,6 +402,222 @@ fully healthy (migrations applied, ~62k codes + ~1.7M aliases reseeded,
 
 ---
 
+## Part 6 — Making the AI optional: fallback, OCR, validation, and what broke
+
+Context: after deploying, manual testing on the live site kept hitting the same
+wall — the LLM provider returning errors — and the UI gave no usable feedback.
+The response was to make the AI *optional* rather than just fix that one error:
+a complete local extraction path, automatic failover to it, a way for users to
+correct the output, and a validation layer to catch OCR's characteristic
+mistakes. Same theme as before: nearly everything below was found by running
+something and looking at the real result.
+
+### 6.1 "Stuck on Loading" was two separate problems
+
+**Symptom.** The deployed frontend showed "Loading..." forever; uploads sat on
+"Uploading...".
+
+**What was actually going on.**
+1. The Render backend never finished starting: a deploy log showed Alembic's
+   connection line, then *five minutes of "no open ports detected"*, then a
+   15-minute timeout. Nothing crashed — it was just slow.
+2. The frontend had no timeout and no failure path for a request that never
+   returns, so a dead backend looked identical to a slow one.
+
+**Root cause of (1).** The previous fix for the partial-seed foreign-key crash
+made `seed_loinc_table()` delete and re-insert *everything* on *every* start.
+With ~62k codes and **1,694,886 alias rows** (counted directly from the CSV)
+that is ~565 chunked commits over the network to Render's Postgres. It passes
+instantly against local SQLite, which is why no local test showed it.
+
+**Fix.** Compare row counts to the CSV first and skip when they match; use
+`TRUNCATE` (not row-by-row `DELETE`) and 20k-row chunks when a rebuild is
+needed. Measured against a real Postgres container: first full seed 139.8 s,
+a restart with a correct table **0.6 s**. The corruption case was re-verified
+against that same Postgres (stale row + empty alias table → rebuilt to exactly
+62,148 / 1,694,886). For the frontend: a 45 s `AbortController` timeout on every
+fetch, a visible "backend unreachable" banner, and `console.error` with the URL
+on every failure.
+
+**Lesson.** A fix for correctness (always resync) can introduce a performance
+regression that only exists in production-shaped conditions. Measure the cost
+of a "safe" change at real data size on a real network path.
+
+### 6.2 Opaque errors: `RetryError[<Future at 0x... raised APIStatusError>]`
+
+**Symptom.** A failed upload's `error_message` was that string — useless.
+
+**Root cause.** `tenacity` wraps the final failure in its own `RetryError`
+unless told otherwise, hiding the real one (a clear `402: insufficient
+credits`). It was also retrying a 402 three times with exponential backoff, for
+a request that can never succeed.
+
+**Fix.** `reraise=True`, and an `_is_transient()` predicate: only 429 and 5xx
+(plus network errors) are retried; 4xx billing/auth/model errors fail at once
+with their real message.
+
+**Also found here.** The OpenAI SDK defaults `max_tokens` to the model's full
+context (65,536), which a low-balance OpenRouter key rejects *before* running
+the request. An explicit cap fixed it — and OpenRouter later reported a separate
+`in_flight_budget_exhausted` 402 for the same low-balance reason. That one
+cannot be fixed in code, which is the argument for the whole fallback design.
+
+### 6.3 Bounding the LLM call (time limit + circuit breaker)
+
+A bound on one call isn't enough: a dead provider would still cost one timeout
+*per page*. Design: 25 s per HTTP request, 45 s total including retries (the
+SDK's own hidden retries are turned off so the budget is real); the first
+failure that will repeat stops LLM attempts for the remainder of the document;
+a `ValueError` (malformed JSON on one page) only diverts that page.
+
+**Test with no mocks.** The real OpenAI client is pointed at a local HTTP server
+that sleeps; the call must be abandoned inside the budget (it is, in well under
+2 s with a small test budget). A second test runs a whole document through the
+pipeline against that slow server and requires extracted rows to come back.
+
+### 6.4 Layout analysis: three attempts, each killed by a real measurement
+
+The attached real report (multi-column Apollo format) exposed that plain
+`page.get_text()` jumbles reading order: percentages came out *before* the
+patient demographics, with their reference ranges stranded at the end.
+
+1. **Split the page into columns at the widest horizontal gap** — failed in the
+   first real test run. Measuring the actual coordinates showed one row's own
+   label→value gap (≈99 pt) is *larger* than the gap between two unrelated
+   columns (≈68 pt). No threshold can separate a gap that is smaller from one
+   that is larger.
+2. **Anchor zones on section headers by font size** — better, but a debug print
+   of the "headers" found showed the big emphasized *value* numbers (15–18 pt)
+   being classified as headers too, because the check only had a lower bound.
+   Adding an upper bound still wasn't enough: the row *labels* are 12 pt, the
+   same as real headers. The real discriminator was that a genuine header's
+   whole vertical band contains *only* header-sized text.
+3. **Merge lines whose vertical gap is under a small tolerance** — worked on one
+   fixture and silently merged unrelated rows in another, because the smallest
+   merge-worthy gap in one document (1.9 pt) was nearly the same as the
+   between-rows gap in a simple one (2.26 pt). Dropping tolerance entirely
+   (merge only on genuine vertical *overlap*, transitively) turned out to be
+   both simpler and correct for every real case.
+
+Final: 47/47 gold values on all fixtures, zero API calls. Another real find in
+the same pass: one fixture used dot-leaders with single spaces
+(`Total Cholesterol .......... 210 mg/dL`), which a whitespace-only tokenizer
+never split — 4 of 47 misses came from that one file.
+
+**Lesson.** Each design was reasoned to be correct on paper and rejected by
+actually running it on real data. Keep the failed attempts in the docstring —
+they explain why the final design looks the way it does.
+
+### 6.5 OCR preprocessing: thresholds from measurements, not intuition
+
+Generated test scans with *known* injected defects (so the expected answer is
+known) and measured. Results that changed the design:
+
+- **Contrast measure.** Grey-level standard deviation said clean pages were
+  "low contrast" (a mostly-white page always has tiny variance). A percentile
+  version had the same flaw (ink is under 1% of pixels). Splitting at the Otsu
+  threshold and comparing mean paper vs mean ink is independent of ink coverage.
+- **Everything else** got thresholds from a measured table (noise residual
+  0.14 clean vs 1.3–2.4 degraded; Laplacian variance 387 clean vs 82–143
+  blurred/faded; paper-vs-ink range 224 clean vs 114 faded), and each step runs
+  only if its defect is present. A clean page must come out untouched — that is
+  a test.
+- **Payoff.** Degraded scans read **0% of values without preprocessing and 92%
+  with it** (clean scans: 88%). The test suite asserts that gap directly, so
+  the stage has to keep earning its place.
+- **Skew** is found by the classical projection-profile method; estimated
+  within 0.4° of the injected angle at five angles. Quarter-turn pages use
+  Tesseract's orientation detection (all of 90/180/270 verified).
+- **Retry strategy backfired.** An adaptive-threshold (binarized) retry made
+  Tesseract run past its timeout on speckled scans — the timeout guard worked,
+  and the variant was dropped as a retry (and later removed entirely).
+
+### 6.6 Tesseract is chaotic about scale
+
+Two nearly identical resize factors (1.995× vs exactly 2.0×) took one complex
+page from 5/12 to 9/12 correct values. So no single setting is "best".
+Design: accept the default attempt if it looks healthy; otherwise try other
+scales (max 4 runs, a total page budget) and keep the candidate with the best
+*internal* quality score — more rows, rows with unit/range, weighted by OCR
+confidence — which needs no ground truth. Measured: 80% vs 79% for always-2×
+(oracle 86%): a modest gain concentrated on hard pages, honestly reported as
+such.
+
+### 6.7 Memory: I measured it wrong first, then right
+
+The target is Render's 512 MB. Four stages of getting this right:
+
+1. A first measurement said **545 MB** — over budget. It was wrong: the watcher
+   was running while the *test-fixture generator* made float copies of a large
+   image. Re-measuring only the code under test gave 221 MB (A4) / 281 MB
+   (large page).
+2. With the app and the LOINC alias index loaded in the same process (the real
+   deployment shape) an A4 scan peaked at ~321 MB — acceptable.
+3. Docker Desktop wasn't running during the first verification pass, so the
+   Linux numbers were unverified; once it was, the large page hit **496 MB** in
+   a 512 MB container — 16 MB of headroom. Fixes: cap OCR image pixels, downscale
+   oversized inputs, `malloc_trim` after each OCR, and `MALLOC_ARENA_MAX=2`.
+4. Repeated runs looked like a leak (410 → 426 → 463 MB). Splitting the cgroup
+   into anonymous vs file memory showed anonymous memory *oscillating*
+   (279–324 MB), not climbing — fragmentation, not a leak; and the high "peak"
+   included reclaimable file cache. Final: 12 consecutive documents including
+   six large pages under a hard 512 MB cap, zero OOM kills, anonymous memory
+   plateauing at ≈ 293 MB.
+
+This is also why OCR concurrency defaults to **1**: two parallel large-page OCRs
+would exceed the limit, so "use more threads" would have been an outage.
+
+### 6.8 A validation filter that would have deleted real tests
+
+The junk-row filter first kept short labels only if they were in the
+deterministic alias index. Unit tests with a small hand-made alias dict passed.
+Checking against the *real* index showed `co2` and `ph` are not in it (the
+index deliberately omits ambiguous aliases) — so it would have silently deleted
+genuine `pH` and `CO2` rows from every scan. Replaced with a set of ~8k short
+names from *all* LOINC names/aliases (0.5 s to build, <1 MB), plus an
+abbreviation-shape check for names LOINC lacks (`INR`), and a regression test
+that runs real test names through the real set. The same Linux run surfaced the
+trigger: Tesseract read `CO2` as `C02`; the label is now repaired — but only
+when a character-swapped variant is an exact known name, never a guess.
+
+**Lesson.** A toy dictionary in a unit test can validate logic that is wrong
+against real data. Test the filter that can *delete* data against the real
+reference set.
+
+### 6.9 Decimal-point loss: suggest, don't rewrite
+
+OCR dropped decimals on big coloured values (`7.15`→`715`, `10.9`→`109`,
+`4.6`→`46`; also `41` for `4.1` in a container run). The validator suggests a
+fix only when the value is ≥ 5× the range's upper bound and exactly one
+decimal placement lands in a band around the range. It *never* changes the
+stored value — silently editing a clinical number is worse than leaving it
+visibly suspect — the UI offers a one-click "Use 7.15". Observed limit: with
+no range read there is no evidence, so no suggestion; other digit slips (`6`→`1`)
+are undetectable. After a user edit the row is re-validated, so a stale
+"possible lost decimal" note doesn't outlive the fix.
+
+### 6.10 Frontend bugs found only by driving the real UI
+
+- **Delete looked like it failed but succeeded.** `DELETE` returns 204 with no
+  body and the shared `api()` helper always called `response.json()`, which
+  throws on an empty body — so the request succeeded, the UI reported an
+  error and never refreshed. Found because the network log showed a 204 while
+  the screen still had the row. Fixed with one line (`status === 204 → null`).
+- **Polling would wipe an open edit form.** The 2 s status poll re-renders the
+  list; it now skips the re-render while a form is open (explicit saves force it).
+
+### 6.11 Smaller things worth knowing
+
+- **Empty `DATABASE_URL`** in `.env` made the app fall back to `healthpilot_dev.db`,
+  a different file from the one inspected, which made a migrated database look
+  un-migrated for a few minutes.
+- **A 23 MB test PDF hit the 15 MB upload cap** because the fixture embedded PNG
+  pages; real scanned PDFs embed JPEGs. (The cap itself worked.)
+- **Shell heredocs mangled long patch scripts** (backticks/`$` and `\n` escapes);
+  the reliable approach was writing scripts to files.
+
+---
+
 ## How to talk about this in an interview
 
 **"What was the hardest bug you hit?"** → the Act 1–5 story above. Lead with
@@ -427,3 +645,25 @@ tie-break (3.1). A reasonable-sounding idea, implemented, tested against
 the actual data, found to produce a worse failure mode than not having it,
 and reverted in favor of a more conservative design. That's a stronger
 answer than pretending every design decision was right the first time.
+
+**"What did you do when the AI provider kept failing?"** → made the AI optional
+instead of only fixing the one error (6.1-6.3): a time-bounded LLM call, a
+circuit breaker so a dead provider costs one attempt per document, and a full
+local pipeline behind it. Then said so honestly in the UI: yellow banner,
+editable rows, confidence below the review threshold.
+
+**"How did you decide the image-preprocessing thresholds?"** → generated scans
+with known injected defects, measured each defect numerically on clean vs
+degraded images, set thresholds between them, and wrote tests that assert
+recovery against the known truth (6.5). The headline number comes from a test:
+0% readable without preprocessing, 92% with.
+
+**"How did you handle memory limits?"** → measured, and caught my own
+measurement error (6.7): the first number was inflated by the test-fixture
+generator. Verified in a real 512 MB Linux container, separated anonymous
+memory from reclaimable cache to tell fragmentation from a leak, and set OCR
+concurrency to 1 because memory, not CPU, was the constraint.
+
+**"Why not automatically correct the OCR digit errors?"** → a silently edited
+clinical value is worse than a visibly suspect one. The validator suggests
+(`715` → `7.15`) and a human applies it (6.9).
