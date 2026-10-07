@@ -29,7 +29,8 @@ database, and CORS are all wired correctly end-to-end.
 
 ## 3. Golden-path test
 
-Upload `eval/sample_reports/01_cbc_clean_digital.pdf` (a clean CBC panel).
+Upload `eval/sample_reports/01_cbc_clean_digital.pdf` (a clean CBC panel). (Speed benchmarks on
+the larger documents in `docs/` are described in `docs/BENCHMARKS.md`.)
 Expected: the report appears in the list, a dark **live console** streams what
 is happening (queued → opening → extracting → matching) and disappears when
 done, then the original document shows on the left with 5 result cards on the
@@ -98,6 +99,13 @@ and rows you add to show **added by you**. None of this ever calls the AI.
 - **Retry buttons:** stop the backend and watch the amber bar appear — **Retry now**
   re-checks; opening a report that can't load shows a red banner with **Retry**.
   Both recover on their own once the server is back.
+
+## 5c. Repeats are faster (remembered mappings)
+
+Upload a report, then upload the same report again (or another with the same test names). The second
+one should show **no AI-picked rows** for tests the first one settled: on a row's detail the
+mapping stage reads "learned" / "Same test name, specimen and unit as a mapping that was confirmed
+before". A human **Review** is remembered too and wins over any AI pick.
 
 ## 6. What "success" looks like overall
 

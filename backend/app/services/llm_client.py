@@ -198,6 +198,13 @@ null, rather than guessing a value that isn't printed):
 """
 
 
+TEXT_ONLY_NOTE = """
+NOTE: no page image is attached - the text layer above is all you have. It keeps reading
+order but table columns may be flattened onto separate lines, so keep each value paired
+with the test name, unit and range that belong to the same row, and never invent anything.
+"""
+
+
 @_retry_transient
 def extract_page(image_png: bytes, text_layer: Optional[str]) -> PageExtractionResult:
     client = _get_client()
@@ -205,11 +212,14 @@ def extract_page(image_png: bytes, text_layer: Optional[str]) -> PageExtractionR
 
     # Plain-text reports have no rasterized page (image_png is empty) -- send
     # a text-only request rather than an invalid/empty image part.
-    content: list = [{"type": "text", "text": prompt}]
     if image_png:
+        mime = "image/jpeg" if image_png[:2] == b"\xff\xd8" else "image/png"
         b64 = base64.b64encode(image_png).decode("ascii")
-        content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}})
-    elif not text_layer:
+        content: list = [{"type": "text", "text": prompt},
+                         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}}]
+    elif text_layer:
+        content = [{"type": "text", "text": prompt + TEXT_ONLY_NOTE}]
+    else:
         raise ValueError("extract_page called with neither an image nor a text layer")
 
     response = _create(client,
@@ -332,7 +342,7 @@ def _verify_chunk(items: List[dict]) -> List[dict]:
     client = _get_client()
     prompt = BATCH_MAPPING_PROMPT.format(items="\n".join(_format_batch_item(it) for it in items))
     response = _create(client,
-        model=settings.gemini_model,
+        model=settings.gemini_mapping_model or settings.gemini_model,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
         temperature=0.0,

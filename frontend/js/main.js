@@ -330,7 +330,7 @@ function renderWorkspace() {
   }
   document.title = `${meta.filename} — HealthPilot`;
   const [cls, ic] = kindIcon(meta);
-  const hSig = [meta.filename, meta.status, meta.num_pages, meta.uploaded_at, meta.cancel_requested, meta.processing_seconds].join("|");
+  const hSig = [meta.filename, meta.status, meta.num_pages, meta.uploaded_at, meta.cancel_requested, meta.processing_seconds, state.detail && state.detail.id === meta.id ? "d" : "l"].join("|");
   if (els.wsContent.dataset.hsig !== hSig) {
     els.wsContent.dataset.hsig = hSig;
     els.wsIco.innerHTML = `<span class="ico ${cls}">${icon(ic)}</span>`;
@@ -340,6 +340,8 @@ function renderWorkspace() {
     const timed = took != null && (meta.status === "complete" || meta.status === "failed");
     els.wsTime.hidden = !timed;
     els.wsTime.classList.toggle("bad", meta.status === "failed");
+    const last = state.detail && state.detail.id === meta.id ? (state.detail.progress || []).slice(-1)[0] : null;
+    els.wsTime.title = timed && last && /^Finished in/.test(last.msg) ? last.msg : "";
     els.wsTime.innerHTML = timed ? `${icon("clock")}${meta.status === "failed" ? "Stopped after" : "Processed in"} ${fmtDuration(took)}` : "";
     els.wsSub.textContent = [meta.num_pages ? `${meta.num_pages} page${meta.num_pages === 1 ? "" : "s"}` : null, `uploaded ${fmtDateTime(meta.uploaded_at)}`].filter(Boolean).join(" · ");
     els.wsStatus.innerHTML = statusChip(meta);
@@ -363,7 +365,9 @@ function renderBanners() {
     if (d.status === "failed") {
       parts.push(`<div class="banner red">${icon("alert")}<div class="txt"><b>Processing failed.</b><span class="why">${esc(d.error_message || "No further detail was recorded.")}</span></div></div>`);
     } else if (d.status === "complete" && d.error_message) {
-      parts.push(`<div class="banner yellow">${icon("info")}<div class="txt"><b>Some pages couldn't be read.</b><span class="why">${esc(d.error_message)}</span></div></div>`);
+      // Bracketed system notes ("[Recovered after an interrupted run; retrying.]") are not page problems.
+      const msg = d.error_message.replace(/\s*\[[^\]]*\]/g, "").trim();
+      if (msg) parts.push(`<div class="banner yellow">${icon("info")}<div class="txt"><b>Some pages couldn't be read.</b><span class="why">${esc(msg)}</span></div></div>`);
     }
   }
   const sig = parts.join("");

@@ -1,0 +1,1365 @@
+{
+ "label": "render-prod-before",
+ "note": "previous version, Render free tier, 6 documents uploaded together",
+ "when": "2026-10-08T01:39:31",
+ "documents": [
+  {
+   "file": "sterling-accuris-pathology-sample-report-unlocked-19.pdf",
+   "pages": 1,
+   "status": "complete",
+   "rows": 16,
+   "processing_seconds": 37.8,
+   "opened_at": 5.993262,
+   "sending_at": 18.188877,
+   "first_page_at": 37.250819,
+   "ai_page_seconds": [
+    12.3
+   ],
+   "final_line": "Finished in 37.8s - 16 observation(s) extracted [slowest page 12.3s, LOINC matching 6.8s longest page]",
+   "observations": [
+    {
+     "page": 1,
+     "name": "Colour",
+     "value": "Pale Yellow",
+     "unit": null,
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "Clearity",
+     "value": "Clear",
+     "unit": null,
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "pH",
+     "value": "6.0",
+     "unit": null,
+     "loinc": "5803-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Specific Gravity",
+     "value": "1.030",
+     "unit": null,
+     "loinc": "5811-5",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Urine Glucose",
+     "value": "Present (+)",
+     "unit": null,
+     "loinc": "25428-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Urine Protein",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "20454-5",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Bilirubin",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "5770-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Urobilinogen",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "5818-0",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Urine Ketone",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "2514-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Nitrite",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "5802-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Pus Cells",
+     "value": "1-2",
+     "unit": null,
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "Red Cells",
+     "value": "Nil",
+     "unit": "/hpf",
+     "loinc": "13945-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Epithelial Cells",
+     "value": "1-2",
+     "unit": "/hpf",
+     "loinc": "5787-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Casts",
+     "value": "Absent",
+     "unit": "/hpf",
+     "loinc": "24124-0",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Crystals",
+     "value": "Absent",
+     "unit": "/hpf",
+     "loinc": "38459-4",
+     "stage": "lexical_llm",
+     "status": "needs_review"
+    },
+    {
+     "page": 1,
+     "name": "Amorphous Material",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "8246-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    }
+   ]
+  },
+  {
+   "file": "sterling-accuris-pathology-sample-report-unlocked-18.pdf",
+   "pages": 1,
+   "status": "complete",
+   "rows": 9,
+   "processing_seconds": 34.4,
+   "opened_at": 3.700147,
+   "sending_at": 18.506542,
+   "first_page_at": 33.865926,
+   "ai_page_seconds": [
+    10.7
+   ],
+   "final_line": "Finished in 34.4s - 9 observation(s) extracted [slowest page 10.7s, LOINC matching 4.7s longest page]",
+   "observations": [
+    {
+     "page": 1,
+     "name": "Unknown",
+     "value": "0.1",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "F",
+     "value": "0.3",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "Unknown",
+     "value": "1.6",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "P2",
+     "value": "5.5",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "P3",
+     "value": "5.2",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "Ao",
+     "value": "84.4",
+     "unit": "%",
+     "loinc": "657-7",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "A2",
+     "value": "2.8",
+     "unit": "%",
+     "loinc": "4551-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "F Concentration",
+     "value": "0.3",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "A2 Concentration",
+     "value": "2.8",
+     "unit": "%",
+     "loinc": "4552-6",
+     "stage": "lexical_llm",
+     "status": "needs_review"
+    }
+   ]
+  },
+  {
+   "file": "sterling-accuris-pathology-sample-report-unlocked-6.pdf",
+   "pages": 1,
+   "status": "complete",
+   "rows": 3,
+   "processing_seconds": 38.1,
+   "opened_at": 28.103401,
+   "sending_at": 28.39832,
+   "first_page_at": 36.562131,
+   "ai_page_seconds": [
+    4.6
+   ],
+   "final_line": "Finished in 38.1s - 3 observation(s) extracted [slowest page 4.6s, LOINC matching 3.7s longest page]",
+   "observations": [
+    {
+     "page": 1,
+     "name": "T3 - Triiodothyronine",
+     "value": "1.01",
+     "unit": "ng/mL",
+     "loinc": "3053-6",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "T4 - Thyroxine",
+     "value": "7.84",
+     "unit": "mg/mL",
+     "loinc": "3026-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "TSH - Thyroid Stimulating Hormone",
+     "value": "0.8199",
+     "unit": "microIU/mL",
+     "loinc": "3016-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    }
+   ]
+  },
+  {
+   "file": "sterling-accuris-pathology-sample-report-unlocked-3.pdf",
+   "pages": 1,
+   "status": "complete",
+   "rows": 7,
+   "processing_seconds": 11.7,
+   "opened_at": 2.080628,
+   "sending_at": 2.37293,
+   "first_page_at": 11.513234,
+   "ai_page_seconds": [
+    5.8
+   ],
+   "final_line": "Finished in 11.7s - 7 observation(s) extracted [slowest page 5.8s, LOINC matching 3.4s longest page]",
+   "observations": [
+    {
+     "page": 1,
+     "name": "Cholesterol",
+     "value": "189.0",
+     "unit": "mg/dL",
+     "loinc": "2093-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Triglyceride",
+     "value": "168.0",
+     "unit": "mg/dL",
+     "loinc": "2571-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "HDL Cholesterol",
+     "value": "60.0",
+     "unit": "mg/dL",
+     "loinc": "2085-9",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Direct LDL",
+     "value": "100.39",
+     "unit": "mg/dL",
+     "loinc": "18262-6",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "VLDL",
+     "value": "33.60",
+     "unit": "mg/dL",
+     "loinc": "13458-5",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "CHOL/HDL Ratio",
+     "value": "3.1",
+     "unit": null,
+     "loinc": "9830-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "LDL/HDL Ratio",
+     "value": "1.7",
+     "unit": null,
+     "loinc": "11054-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    }
+   ]
+  },
+  {
+   "file": "sterling-accuris-pathology-sample-report-unlocked.pdf",
+   "pages": 19,
+   "status": "complete",
+   "rows": 103,
+   "processing_seconds": 98.5,
+   "opened_at": 31.200821,
+   "sending_at": 35.208736,
+   "first_page_at": 57.202232,
+   "ai_page_seconds": [
+    14.9,
+    4.3,
+    7.2,
+    4.5,
+    4.5,
+    5.0,
+    4.1,
+    7.2,
+    4.4,
+    4.3,
+    8.1,
+    3.4,
+    2.9,
+    3.0,
+    3.5,
+    4.7,
+    4.8,
+    22.7,
+    8.5
+   ],
+   "final_line": "Finished in 98.5s - 103 observation(s) extracted [slowest page 22.7s, LOINC matching 7.8s longest page]",
+   "observations": [
+    {
+     "page": 1,
+     "name": "Hemoglobin",
+     "value": "14.5",
+     "unit": "g/dL",
+     "loinc": "718-7",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "RBC Count",
+     "value": "4.79",
+     "unit": "million/cmm",
+     "loinc": "789-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Hematocrit",
+     "value": "43.3",
+     "unit": "%",
+     "loinc": "4544-3",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "MCV",
+     "value": "90.3",
+     "unit": "fL",
+     "loinc": "30428-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "MCH",
+     "value": "30.2",
+     "unit": "pg",
+     "loinc": "28539-5",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "MCHC",
+     "value": "33.4",
+     "unit": "g/dL",
+     "loinc": "28540-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "RDW CV",
+     "value": "13.60",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 1,
+     "name": "WBC Count",
+     "value": "10570",
+     "unit": "/cmm",
+     "loinc": "6690-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Neutrophils",
+     "value": "73",
+     "unit": "%",
+     "loinc": "26511-6",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Absolute Neutrophils",
+     "value": "7716",
+     "unit": "/cmm",
+     "loinc": "26499-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Lymphocytes",
+     "value": "19",
+     "unit": "%",
+     "loinc": "737-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Absolute Lymphocytes",
+     "value": "2008",
+     "unit": "/cmm",
+     "loinc": "26474-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Eosinophils",
+     "value": "02",
+     "unit": "%",
+     "loinc": "25638-8",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Absolute Eosinophils",
+     "value": "211",
+     "unit": "/cmm",
+     "loinc": "26449-9",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Monocytes",
+     "value": "06",
+     "unit": "%",
+     "loinc": "744-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Absolute Monocytes",
+     "value": "634",
+     "unit": "/cmm",
+     "loinc": "26484-6",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Basophils",
+     "value": "00",
+     "unit": "%",
+     "loinc": "707-0",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Absolute Basophils",
+     "value": "0",
+     "unit": "/cmm",
+     "loinc": "26444-0",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Platelet Count",
+     "value": "150000",
+     "unit": "/cmm",
+     "loinc": "777-3",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "MPV",
+     "value": "14.00",
+     "unit": "fL",
+     "loinc": "28542-9",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "RBC Morphology",
+     "value": "Normochromic Normocytic",
+     "unit": null,
+     "loinc": "6742-1",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "WBC Morphology",
+     "value": "WBCs Series Shows Normal Morphology",
+     "unit": null,
+     "loinc": "11156-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Platelets Morphology",
+     "value": "Platelets are adequate with normal morphology.",
+     "unit": null,
+     "loinc": "11125-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "Parasites",
+     "value": "Malarial parasite is not detected.",
+     "unit": null,
+     "loinc": "24429-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 1,
+     "name": "ESR",
+     "value": "7",
+     "unit": "mm/1hr",
+     "loinc": "30341-2",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 2,
+     "name": "ABO Type",
+     "value": "\"A\"",
+     "unit": null,
+     "loinc": "883-9",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 2,
+     "name": "Rh (D) Type",
+     "value": "Positive",
+     "unit": null,
+     "loinc": "10331-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 3,
+     "name": "Cholesterol",
+     "value": "189.0",
+     "unit": "mg/dL",
+     "loinc": "2093-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 3,
+     "name": "Triglyceride",
+     "value": "168.0",
+     "unit": "mg/dL",
+     "loinc": "2571-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 3,
+     "name": "HDL Cholesterol",
+     "value": "60.0",
+     "unit": "mg/dL",
+     "loinc": "2085-9",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 3,
+     "name": "Direct LDL",
+     "value": "100.39",
+     "unit": "mg/dL",
+     "loinc": "18262-6",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 3,
+     "name": "VLDL",
+     "value": "33.60",
+     "unit": "mg/dL",
+     "loinc": "13458-5",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 3,
+     "name": "CHOL/HDL Ratio",
+     "value": "3.1",
+     "unit": null,
+     "loinc": "9830-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 3,
+     "name": "LDL/HDL Ratio",
+     "value": "1.7",
+     "unit": null,
+     "loinc": "11054-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 4,
+     "name": "Fasting Blood Sugar",
+     "value": "141.0",
+     "unit": "mg/dL",
+     "loinc": "2345-7",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 16,
+     "name": "HIV I & II Ab/Ag with P24 Ag",
+     "value": "0.070",
+     "unit": "S/Co",
+     "loinc": "58900-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 16,
+     "name": "HIV I & II Ab/Ag with P24 Ag - Interpretation",
+     "value": "Non Reactive",
+     "unit": null,
+     "loinc": "56888-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 18,
+     "name": "Ao",
+     "value": "84.4",
+     "unit": "%",
+     "loinc": "657-7",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 5,
+     "name": "HbA1c",
+     "value": "7.10",
+     "unit": "%",
+     "loinc": "4548-4",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 5,
+     "name": "Mean Blood Glucose",
+     "value": "157.07",
+     "unit": "mg/dL",
+     "loinc": "27353-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 6,
+     "name": "T3 - Triiodothyronine",
+     "value": "1.01",
+     "unit": "ng/mL",
+     "loinc": "3053-6",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 6,
+     "name": "T4 - Thyroxine",
+     "value": "7.84",
+     "unit": "mg/mL",
+     "loinc": "3026-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 6,
+     "name": "TSH - Thyroid Stimulating Hormone",
+     "value": "0.8199",
+     "unit": "microIU/mL",
+     "loinc": "3016-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 7,
+     "name": "Microalbumin (per urine volume)",
+     "value": "10.50",
+     "unit": "mg/L",
+     "loinc": "14957-5",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 8,
+     "name": "Total Protein",
+     "value": "7.00",
+     "unit": "g/dL",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 8,
+     "name": "Albumin",
+     "value": "4.20",
+     "unit": "g/dL",
+     "loinc": "61151-7",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 8,
+     "name": "Globulin",
+     "value": "2.80",
+     "unit": "g/dL",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 8,
+     "name": "A/G Ratio",
+     "value": "1.50",
+     "unit": null,
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 8,
+     "name": "Total Bilirubin",
+     "value": "0.70",
+     "unit": "mg/dL",
+     "loinc": "1975-2",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 8,
+     "name": "Conjugated Bilirubin",
+     "value": "0.30",
+     "unit": "mg/dL",
+     "loinc": "15152-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 8,
+     "name": "Unconjugated Bilirubin",
+     "value": "0.20",
+     "unit": "mg/dL",
+     "loinc": "1971-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 8,
+     "name": "Delta Bilirubin",
+     "value": "0.20",
+     "unit": "mg/dL",
+     "loinc": "1970-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 9,
+     "name": "Iron",
+     "value": "103.00",
+     "unit": "micro g/dL",
+     "loinc": "2498-4",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 9,
+     "name": "Total Iron Binding Capacity (TIBC)",
+     "value": "352.00",
+     "unit": null,
+     "loinc": "2500-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 9,
+     "name": "Transferrin Saturation",
+     "value": "29.26",
+     "unit": "%",
+     "loinc": "2502-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 10,
+     "name": "Homocysteine, Serum",
+     "value": "23.86",
+     "unit": "micromol/L",
+     "loinc": "13965-9",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "Creatinine, Serum",
+     "value": "0.83",
+     "unit": "mg/dL",
+     "loinc": "2160-0",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "Urea",
+     "value": "18.0",
+     "unit": "mg/dL",
+     "loinc": "3091-6",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "Blood Urea Nitrogen",
+     "value": "8.41",
+     "unit": "mg/dL",
+     "loinc": "3094-0",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "Uric Acid",
+     "value": "4.90",
+     "unit": "mg/dL",
+     "loinc": "3084-1",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "Calcium",
+     "value": "9.10",
+     "unit": "mg/dL",
+     "loinc": "17861-6",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "SGPT",
+     "value": "48.0",
+     "unit": "U/L",
+     "loinc": "1742-6",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "SGOT",
+     "value": "27.0",
+     "unit": "U/L",
+     "loinc": "1920-8",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "Sodium (Na+)",
+     "value": "143.00",
+     "unit": "mmol/L",
+     "loinc": "2951-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "Potassium (K+)",
+     "value": "4.90",
+     "unit": "mmol/L",
+     "loinc": "2823-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 11,
+     "name": "Chloride (Cl-)",
+     "value": "105.0",
+     "unit": "mmol/L",
+     "loinc": "2075-0",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 12,
+     "name": "25(OH) Vitamin D",
+     "value": "8.98",
+     "unit": "ng/mL",
+     "loinc": "62292-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 13,
+     "name": "Vitamin B12",
+     "value": "< 148",
+     "unit": "pg/mL",
+     "loinc": "2132-9",
+     "stage": "alias_exact",
+     "status": "confirmed"
+    },
+    {
+     "page": 14,
+     "name": "PSA-Prostate Specific Antigen, Total",
+     "value": "0.573",
+     "unit": "ng/mL",
+     "loinc": "83112-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 15,
+     "name": "IgE",
+     "value": "492.30",
+     "unit": "IU/mL",
+     "loinc": "19113-0",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 16,
+     "name": "HBsAg",
+     "value": "0.290",
+     "unit": "S/Co",
+     "loinc": "58452-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 16,
+     "name": "HBsAg - Interpretation",
+     "value": "Non Reactive",
+     "unit": null,
+     "loinc": "5195-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 17,
+     "name": "Hb A",
+     "value": "84.4",
+     "unit": "%",
+     "loinc": "17856-6",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 17,
+     "name": "Hb A2",
+     "value": "2.8",
+     "unit": "%",
+     "loinc": "42245-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 17,
+     "name": "P2 Peak",
+     "value": "5.5",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 17,
+     "name": "P3 Peak",
+     "value": "5.2",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 17,
+     "name": "Foetal Hb",
+     "value": "0.3",
+     "unit": "%",
+     "loinc": "17856-6",
+     "stage": "retrieval_auto",
+     "status": "confirmed"
+    },
+    {
+     "page": 17,
+     "name": "Interpretation",
+     "value": "Negative for typical beta thalassemia trait.",
+     "unit": null,
+     "loinc": "42247-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 18,
+     "name": "Unknown",
+     "value": "0.1",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 18,
+     "name": "F",
+     "value": "0.3",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 18,
+     "name": "Unknown",
+     "value": "1.6",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 18,
+     "name": "P2",
+     "value": "5.5",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 18,
+     "name": "P3",
+     "value": "5.2",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 18,
+     "name": "A2",
+     "value": "2.8",
+     "unit": "%",
+     "loinc": "4551-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 18,
+     "name": "Total Area",
+     "value": "2,697,411",
+     "unit": null,
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 18,
+     "name": "F Concentration",
+     "value": "0.3",
+     "unit": "%",
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 18,
+     "name": "A2 Concentration",
+     "value": "2.8",
+     "unit": "%",
+     "loinc": "4551-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Colour",
+     "value": "Pale Yellow",
+     "unit": null,
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 19,
+     "name": "Clearity",
+     "value": "Clear",
+     "unit": null,
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 19,
+     "name": "pH",
+     "value": "6.0",
+     "unit": null,
+     "loinc": "5803-2",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Specific Gravity",
+     "value": "1.030",
+     "unit": null,
+     "loinc": "5811-5",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Urine Glucose",
+     "value": "Present (+)",
+     "unit": null,
+     "loinc": "25428-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Urine Protein",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "20454-5",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Bilirubin",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "5770-3",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Urobilinogen",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "5818-0",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Urine Ketone",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "2514-8",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Nitrite",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "5802-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Pus Cells",
+     "value": "1-2",
+     "unit": null,
+     "loinc": null,
+     "stage": "lexical_llm",
+     "status": "unmapped"
+    },
+    {
+     "page": 19,
+     "name": "Red Cells",
+     "value": "Nil",
+     "unit": "/hpf",
+     "loinc": "13945-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Epithelial Cells",
+     "value": "1-2",
+     "unit": "/hpf",
+     "loinc": "5787-7",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Casts",
+     "value": "Absent",
+     "unit": "/hpf",
+     "loinc": "24124-0",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Crystals",
+     "value": "Absent",
+     "unit": "/hpf",
+     "loinc": "38459-4",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    },
+    {
+     "page": 19,
+     "name": "Amorphous Material",
+     "value": "Absent",
+     "unit": null,
+     "loinc": "8246-1",
+     "stage": "lexical_llm",
+     "status": "confirmed"
+    }
+   ]
+  },
+  {
+   "file": "pdf&rendition=1.pdf",
+   "pages": 3,
+   "status": "complete",
+   "rows": 21,
+   "processing_seconds": 54.5,
+   "opened_at": 9.093513,
+   "sending_at": 9.299443,
+   "first_page_at": 53.882376,
+   "ai_page_seconds": [
+    38.5,
+    19.6,
+    18.8
+   ],
+   "final_line": "Finished in 54.5s - 21 observation(s) extracted [slowest page 38.5s, LOINC matching 12.6s longest page]",
+   "observations": [],
+   "redacted": true
+  }
+ ]
+}

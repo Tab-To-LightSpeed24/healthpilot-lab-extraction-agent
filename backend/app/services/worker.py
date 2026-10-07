@@ -95,11 +95,11 @@ def _claim_next_pending(db: Session) -> str | None:
     return None
 
 
-def effective_concurrency(requested: int, dialect: str) -> int:
+def effective_concurrency(requested: int, dialect: str, sqlite_cap: int = 1) -> int:
     """SQLite allows one writer at a time, so concurrent document jobs there just
     collide on locks; only real databases (Postgres) run jobs side by side."""
     if dialect == "sqlite":
-        return 1
+        return max(1, min(requested, sqlite_cap))
     return max(1, requested)
 
 
@@ -154,7 +154,7 @@ def start_worker() -> threading.Event:
     from app.core.db import engine
 
     stop_event = threading.Event()
-    n = effective_concurrency(settings.worker_concurrency, engine.dialect.name)
+    n = effective_concurrency(settings.worker_concurrency, engine.dialect.name, settings.sqlite_worker_concurrency)
     for k in range(n):
         threading.Thread(
             target=worker_loop, args=(stop_event, k == 0), name=f"doc-worker-{k}", daemon=True

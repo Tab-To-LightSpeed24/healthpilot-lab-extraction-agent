@@ -7,7 +7,8 @@ stores everything in a structured, traceable data store, and exposes it via
 API + a web UI — a side-by-side original-document viewer, a live processing
 console, batch upload, mid-job cancellation, a human-in-the-loop review action,
 and full manual correction of results. A 12-page report is read, coded and
-saved in about 12 seconds.
+saved in about 12 seconds, and the six-document batch in `docs/BENCHMARKS.md`
+finishes in about 51 s in total (see that report for what was and was not measured).
 
 **The AI model is optional.** If it is disabled, unconfigured, slow, over
 budget, or erroring, the same document is extracted by a fully local pipeline
@@ -31,11 +32,12 @@ to review and edit. No document depends on a paid API to produce output.
         llm_client (Gemini)                        digital PDF  -> layout reconstruction
         ALL pages of a document sent                                    -> rule-based field parser
         concurrently (one call per page,               plain text   -> field parser
-        LLM_MAX_CONCURRENCY); 25s per request,
-        45s total budget incl. retries; first          scanned PDF /  -> preprocessing (rotation,
-        failure that will repeat (timeout,              image           deskew, shadow, noise,
-        credits, bad key, outage) stops LLM                             sharpen) -> Tesseract OCR
-        attempts for the rest of the document                           (bounded retries) -> parser
+        LLM_MAX_CONCURRENCY); text-only for text-rich  scanned PDF /
+        digital pages, else a 150-DPI JPEG (lazy);
+        25s/request, 45s budget; first failure         image          -> preprocessing (rotation,
+        that will repeat (timeout, credits, bad                         deskew, shadow, noise,
+        key, outage) stops LLM attempts for                             sharpen) -> Tesseract OCR
+        the rest of the document                                        (bounded retries) -> parser
                       │                                            │
                       │                              5. Validation (local): lost-decimal detection
                       │                                 (suggest, never silently change), garbled
@@ -47,6 +49,8 @@ to review and edit. No document depends on a paid API to produce output.
                          (runs inside each page's task, no database access)
                          stage 1: alias-exact match against the ~18k-code LOINC table
                                   + a small human-verified override list (no model)
+                         stage 1b: "remembered" picks (same name + specimen + unit confirmed
+                                  before by a human or a high-confidence AI pick; no model)
                          stage 2: in-memory retrieval index (~1 ms): IDF-weighted names +
                                   synonyms, specimen / unit / "commonly ordered" signals
                          stage 3: ONE batched LLM call per page settles the ambiguous rows
@@ -152,6 +156,20 @@ while a job is alive) lets a sweep requeue a job whose process died: 45 s after
 startup, otherwise after 3 minutes. A broker would add infrastructure and a
 failure mode for no durability benefit at this scale (single instance).
 
+**Cheap page preparation.** Opening a document only reads each page's text; page images
+are rendered lazily, and only when needed: a digital PDF page with a solid text layer is sent
+to the model as text only (`LLM_PAGE_INPUT=auto`; `image` / `text` force a mode), anything
+else as a 150-DPI JPEG, and the full 200-DPI PNG is rendered only for local OCR. On the six
+benchmark documents that is 92% less CPU and 99% less upload than rendering every page to a
+PNG up front (`docs/BENCHMARKS.md`) — the up-front rendering was a large share of the
+30-second "opening" stalls on Render's ~0.1-CPU free tier. Progress lines are committed
+at most every ~0.8 s (each commit is a database round trip), and a finished job's
+leftover "recovered" note is cleared when it restarts.
+
+**Remembered mappings.** An AI LOINC pick with confidence ≥ 0.9, and every human review,
+is stored (`learned_mappings`) keyed by name + specimen + unit and served from memory
+next time without an AI call; a human choice is never overwritten by an AI one.
+
 **Parallel by design.** Pages of one document are read concurrently and each
 page's LOINC matching runs in the same task; several documents run side by
 side (`WORKER_CONCURRENCY`, forced to 1 on SQLite). Process-wide caps keep it
@@ -187,7 +205,7 @@ tables but no history is stamped at the matching baseline before upgrading.
 
 **No test in this repo claims a result it didn't actually produce.**
 
-- `backend/tests/` has **343 tests, all passing at last run**. They use real PDF
+- `backend/tests/` has **359 tests, all passing at last run**. They use real PDF
   generation and parsing, a real SQLite database seeded with the real LOINC
   table, the real FastAPI app, the real queue/cancel/review/CRUD logic,
   and — for the scanned path — the **real Tesseract engine** (those tests skip,
@@ -257,8 +275,11 @@ Key settings (all in `backend/.env.example`):
 | `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_PAGE_BUDGET_SECONDS` | `25` / `45` | Per-request cap / total budget incl. retries before diverting to fallback |
 | `OCR_ENABLED`, `TESSERACT_CMD`, `OCR_PAGE_TIMEOUT_SECONDS` | `true`, auto, `40` | Local OCR |
 | `OCR_MAX_WORKERS` | `1` | Background OCR threads (process-wide). Keep 1 on 512 MB instances: one large-page OCR peaks ≈ 424 MB |
-| `LLM_MAX_CONCURRENCY` / `LLM_GLOBAL_CONCURRENCY` | `12` / `24` | Pages of one document sent at once / total simultaneous LLM requests across all documents |
+| `LLM_MAX_CONCURRENCY` / `LLM_GLOBAL_CONCURRENCY` | `20` / `24` | Pages of one document sent at once / total simultaneous LLM requests across all documents |
 | `WORKER_CONCURRENCY` | `2` | Documents processed at the same time (Postgres; SQLite always 1) |
+| `LLM_PAGE_INPUT` / `LLM_TEXT_ONLY_MIN_CHARS` | `auto` / `400` | `auto`: text-only for PDF pages with at least that much text, else a JPEG; `image` or `text` force one |
+| `GEMINI_MAPPING_MODEL` | empty | Optional lighter model for just the LOINC-picking call (untested) |
+| `LEARNED_MIN_CONFIDENCE` | `0.9` | AI picks at or above this are remembered for next time |
 | `MAPPING_LLM_MODE` | `ambiguous` | `ambiguous` / `all` / `off`: how LOINC candidates are verified |
 | `GEMINI_REASONING_EFFORT` | `low` | Model "thinking" level; lower is much faster |
 | `LLM_CALL_CAP` | `0` | Hard ceiling on LLM requests per process (0 = unlimited), for cost-controlled test runs |
@@ -317,17 +338,21 @@ Migrations add, in order: extraction provenance (`extraction_source`,
 (`documents.progress`, `documents.pages_done`), wider observation text columns
 (`reference_range` is now `TEXT`; a real report's ~170-character range had
 overflowed `VARCHAR(128)` on Postgres), and `documents.processing_seconds`
-(the "Processed in X s" stat).
+(the "Processed in X s" stat; hover it for the breakdown), and `learned_mappings`
+(remembered LOINC picks).
 
 ### Processing speed
 
-Pages of a document are read by the LLM **concurrently** (`LLM_MAX_CONCURRENCY`, default 12),
+Pages of a document are read by the LLM **concurrently** (`LLM_MAX_CONCURRENCY`, default 20),
 and each page's LOINC matching runs inside that page's task: an **in-memory index**
 (`app/services/retrieval.py`, ~1 ms per lookup) shortlists candidates and **one batched LLM
 call per page** (not per row) settles the ambiguous ones (`MAPPING_LLM_MODE`:
 `ambiguous` default / `all` / `off`). `GEMINI_REASONING_EFFORT=low` keeps the model's
 thinking short. Measured on a real 12-page, 56-row report: ~12 s end to end (previously
-minutes when pages and rows were processed one after another). The UI shows the exact time
+minutes when pages and rows were processed one after another). The six-document
+production scenario (a 19-page, a 3-page and four 1-page PDFs uploaded together) is
+benchmarked in `docs/BENCHMARKS.md`: 5.7–24.8 s of processing per document and 51 s for all
+six with two workers, with ~95% of rows matching the previous version's output. The UI shows the exact time
 under the document name ("Processed in 9.6 s"), stored per document as `processing_seconds`. `LLM_CALL_CAP` sets a hard
 ceiling on LLM requests per server process (0 = unlimited) for cost-controlled test runs.
 
@@ -432,8 +457,13 @@ Each observation includes `extraction_source` (`llm` / `fallback` / `manual`),
 - Workers are in-process threads over a database queue — correct and durable at
   this scale, but scaling across several machines would need a real broker
   (Celery/RQ + Redis), and the rate limiter is per instance.
-- The speed figure comes from one real 12-page report on a fast machine; Render's
-  free tier has a fraction of a CPU, so expect it to be slower there.
+- The speed figures come from a fast development machine; Render's free tier has a
+  fraction of a CPU, so expect it to be slower there (moving off the free plan is the
+  biggest remaining lever, and the deployed app has not been re-measured with the
+  latest changes — see `docs/BENCHMARKS.md` for exactly what was and was not measured).
+- Text-only input drops information that only exists in a page's pictures (charts,
+  scanned stamps); `LLM_PAGE_INPUT=image` restores the image path. Remembered
+  mappings can repeat a wrong confident AI pick until a human reviews that row.
 - The retrieval/LLM mapping trades some accuracy for speed: on the gold set the
   right code was always in the candidate shortlist, but the final pick depends on
   the LLM (the set is small; treat the figures as indicative).

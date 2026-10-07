@@ -13,6 +13,7 @@ from app.core.security import (
     configure_logging, rate_limit_general, require_api_key, security_middleware,
 )
 from app.services.loinc_loader import seed_loinc_table
+from app.services import learned_mappings
 from app.services.retrieval import warm_up_in_background
 from app.services.worker import start_worker
 
@@ -27,7 +28,9 @@ def _run_startup_migrations_and_seed() -> int:
     run_migrations(engine)
     db = SessionLocal()
     try:
-        return seed_loinc_table(db)
+        count = seed_loinc_table(db)
+        learned_mappings.load(db)      # remembered LOINC picks -> memory
+        return count
     finally:
         db.close()
 

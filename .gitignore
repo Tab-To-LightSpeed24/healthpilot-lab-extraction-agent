@@ -18,3 +18,10 @@ node_modules/
 
 # Regenerate with: python backend/scripts/generate_scan_fixtures.py
 /eval/sample_reports/scans/
+
+# A real patient's report (name, record number, referring doctor): never commit.
+/docs/pdf&rendition=1.pdf
+# SQLite side files (WAL mode)
+*.db-wal
+*.db-shm
+*.db-journal

@@ -673,7 +673,31 @@ requeued and finished the document; Cancel on an orphan completed instantly.
 these fixes address every mechanism found, and the next stall should be diagnosed from
 the logs after the stall (a second "Started server process", or "Killed").
 
-### 7.5 Smaller things worth knowing
+### 7.5 Reading the production feeds: the real bottlenecks (and a misleading first guess)
+After the cancel/memory fixes, six documents uploaded together on Render took 11.7–98.5 s each. My
+first guess (the AI is slow on dense pages) was wrong: the 1-page documents had only 3–16 rows.
+The stored progress feeds (readable from the deployed API) showed instead: 28–31 s between
+"picked up" and "opened" (rendering every page to a 200-DPI PNG on a ~0.1-CPU instance, plus a
+global render lock that made small documents wait behind the 19-page one), a 12–15 s gap after a
+restart (one-time index builds), ~2 s per page of serial database commits on the big document, and
+a second AI call on every page for LOINC picks. **Fixes:** lazy rendering with text-only / JPEG
+input, throttled commits, remembered mappings, a higher page-concurrency default — measured in
+`docs/BENCHMARKS.md`. **Also found along the way:** a recovered job kept its "[Recovered after an
+interrupted run; retrying.]" note after completing and showed a misleading yellow "Some pages
+couldn't be read" banner (the note is now cleared on restart and bracketed system notes are never
+shown as page problems), and my own benchmark harness tripped the rate limiter by polling too fast
+(wasting half of a test allowance — validate harnesses with the paid dependency switched off first).
+
+### 7.6 A flaky test that was a real SQLite locking problem
+A test running two documents side by side failed about once in eight runs. Instead of loosening it,
+I looked at why: the worker's idle "was this cancelled?" query left a SQLite read transaction open,
+and under SQLite's default journal mode an open reader blocks another connection's commit, so one
+document's write could wait out the whole busy timeout. Postgres (production) is unaffected, but local
+multi-worker runs and my benchmark were exposed. Fix: end the read transaction after each check and use
+WAL mode for file-based SQLite; the test now proves overlap by waiting for more calls in flight than one
+document has pages, instead of racing a clock (10/10 and repeated full-suite runs stable).
+
+### 7.7 Smaller things worth knowing
 - A hidden browser tab pauses polling by design, so an old tab can show a stale
   "Cancelling" until you return — I first mistook that for a bug and only the test
   harness' hidden pane had caused it.

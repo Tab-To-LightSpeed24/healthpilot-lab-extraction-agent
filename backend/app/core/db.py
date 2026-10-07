@@ -21,9 +21,21 @@ if DATABASE_URL.strip() == "":
 
 connect_args = {}
 if DATABASE_URL.startswith("sqlite"):
-    connect_args = {"check_same_thread": False}
+    connect_args = {"check_same_thread": False, "timeout": 30}
 
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
+
+if DATABASE_URL.startswith("sqlite") and ":memory:" not in DATABASE_URL:
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _sqlite_wal(dbapi_connection, _record):
+        # WAL: readers don't block the writer (and vice versa), which several document workers
+        # sharing one local SQLite file need. Postgres (production) doesn't have this problem.
+        cur = dbapi_connection.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA synchronous=NORMAL")
+        cur.close()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()

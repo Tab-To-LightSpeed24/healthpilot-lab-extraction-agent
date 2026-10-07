@@ -1,22 +1,94 @@
-"""Turns an uploaded file into a list of per-page (text, PNG image bytes) pairs.
+"""Turns an uploaded file into a list of per-page (text, image) pages.
 
-Digital PDFs keep their extractable text layer (fed to Gemini alongside the
-page image as a cross-check). Scanned PDFs and plain images have no text
-layer, so `text` is None and the model relies on the rasterized image alone.
+Digital PDFs keep their extractable text layer. Page IMAGES are rendered lazily, on
+first use, instead of all up front: opening a 19-page PDF used to render 10 MB of
+200-DPI PNGs before anything else could start (31 s on a 0.1-CPU instance). Now the
+text of every page is read immediately (cheap) and each page's image is produced only
+when something actually needs it:
+
+* `image_png`      - full-size PNG (200 DPI), used by the local OCR fallback;
+* `image_for_llm()` - a smaller JPEG for the AI model (~3-4x less CPU and upload).
+
+Scanned PDFs and plain images have no text layer, so `text` is None and the model
+relies on the image alone.
 """
-from dataclasses import dataclass
+import threading
 from typing import List, Optional
 
 import pymupdf as fitz  # PyMuPDF (the `fitz` module name is deprecated)
 
-RENDER_DPI = 200
+RENDER_DPI = 200          # full quality: OCR
+LLM_IMAGE_DPI = 150       # what the AI model gets (JPEG)
+LLM_JPEG_QUALITY = 80
+LLM_IMAGE_MAX_SIDE = 2000  # cap for uploaded photos / scans
 
 
-@dataclass
+class _PdfSource:
+    """One open PDF shared by all its pages. PyMuPDF documents are not thread-safe,
+    so renders on the same document take turns (renders of different documents don't)."""
+
+    def __init__(self, raw: bytes) -> None:
+        self._doc = fitz.open(stream=raw, filetype="pdf")
+        self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        return len(self._doc)
+
+    def text(self, index: int) -> str:
+        with self._lock:
+            return self._doc[index].get_text("text").strip()
+
+    def render(self, index: int, dpi: int, fmt: str) -> bytes:
+        zoom = dpi / 72
+        with self._lock:
+            pix = self._doc[index].get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+            return pix.tobytes("jpeg", jpg_quality=LLM_JPEG_QUALITY) if fmt == "jpeg" else pix.tobytes("png")
+
+
+class _ImageSource:
+    """An uploaded PNG/JPEG: native-size PNG for OCR, a size-capped JPEG for the model."""
+
+    def __init__(self, raw: bytes, filetype: str) -> None:
+        self._raw, self._filetype = raw, filetype
+        self._lock = threading.Lock()
+
+    def render(self, index: int, dpi: int, fmt: str) -> bytes:
+        with self._lock:
+            doc = fitz.open(stream=self._raw, filetype=self._filetype)
+            page = doc[0]
+            if fmt == "png":
+                return page.get_pixmap().tobytes("png")
+            width, height = page.rect.width, page.rect.height
+            scale = min(1.0, LLM_IMAGE_MAX_SIDE / max(width, height, 1))
+            return page.get_pixmap(matrix=fitz.Matrix(scale, scale)).tobytes("jpeg", jpg_quality=LLM_JPEG_QUALITY)
+
+
 class PageContent:
-    page_number: int  # 1-indexed
-    text: Optional[str]
-    image_png: bytes
+    def __init__(self, page_number: int, text: Optional[str], image_png: Optional[bytes] = b"", source=None) -> None:
+        self.page_number = page_number      # 1-indexed
+        self.text = text
+        self._png = image_png
+        self._jpeg: Optional[bytes] = None
+        self._source = source
+
+    @property
+    def image_png(self) -> bytes:
+        """Full-quality PNG; rendered on first access."""
+        if self._png is None:
+            self._png = self._source.render(self.page_number - 1, RENDER_DPI, "png") if self._source else b""
+        return self._png
+
+    def image_for_llm(self) -> bytes:
+        """The (smaller) image sent to the AI model; empty for pure-text pages."""
+        if self._jpeg is None:
+            if self._source is not None:
+                self._jpeg = self._source.render(self.page_number - 1, LLM_IMAGE_DPI, "jpeg")
+            else:
+                self._jpeg = self._png or b""
+        return self._jpeg
+
+    def __repr__(self) -> str:
+        return f"PageContent(page_number={self.page_number}, text={'yes' if self.text else None}, lazy={self._source is not None})"
 
 
 IMAGE_CONTENT_TYPES = {"image/jpeg", "image/jpg", "image/png"}
@@ -77,25 +149,14 @@ def _page_from_docx(raw_content: bytes) -> PageContent:
 
 
 def _page_from_image(raw_content: bytes, filetype: str) -> PageContent:
-    # Normalize through PyMuPDF so downstream always deals with PNG bytes.
-    doc = fitz.open(stream=raw_content, filetype=filetype)
-    pix = doc[0].get_pixmap()
-    return PageContent(page_number=1, text=None, image_png=pix.tobytes("png"))
+    # Validate now (so a corrupt upload fails at open time), render lazily.
+    fitz.open(stream=raw_content, filetype=filetype)[0]
+    return PageContent(page_number=1, text=None, image_png=None, source=_ImageSource(raw_content, filetype))
 
 
 def _pages_from_pdf(raw_content: bytes) -> List[PageContent]:
-    doc = fitz.open(stream=raw_content, filetype="pdf")
-    pages: List[PageContent] = []
-    zoom = RENDER_DPI / 72
-    matrix = fitz.Matrix(zoom, zoom)
-    for i, page in enumerate(doc):
-        text = page.get_text("text").strip()
-        pix = page.get_pixmap(matrix=matrix)
-        pages.append(
-            PageContent(
-                page_number=i + 1,
-                text=text if text else None,
-                image_png=pix.tobytes("png"),
-            )
-        )
-    return pages
+    source = _PdfSource(raw_content)
+    return [
+        PageContent(page_number=i + 1, text=source.text(i) or None, image_png=None, source=source)
+        for i in range(len(source))
+    ]

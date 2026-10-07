@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.loinc import LoincCode
-from app.services import llm_client, retrieval
+from app.services import learned_mappings, llm_client, retrieval
 from app.services.normalization import _clean
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,12 @@ def map_rows(tests: list, alias_index: dict[str, dict], use_llm: bool = True) ->
         exact = _exact_match(None, alias_index, t.original_test_name)
         if exact:
             out[i] = exact
+            continue
+        remembered = learned_mappings.lookup(t.original_test_name, t.specimen, t.unit)
+        rec = index.get(remembered) if remembered else None
+        if rec:
+            out[i] = _result(rec["long_common_name"], rec["loinc_num"], rec["long_common_name"], "confirmed", 0.95,
+                             "learned", "Same test name, specimen and unit as a mapping that was confirmed before.")
             continue
         try:
             hits = index.search(t.original_test_name, specimen=t.specimen, unit=t.unit,

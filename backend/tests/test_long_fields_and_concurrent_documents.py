@@ -110,17 +110,26 @@ def test_two_documents_process_at_the_same_time(tmp_path, monkeypatch):
     s.close()
 
     lock, state = threading.Lock(), {"now": 0, "peak": 0}
+    overlap = threading.Event()
 
     def slow(image_png, text_layer):
+        # Each document has 4 pages, so more than 4 calls in flight at once is only possible if the
+        # two documents really run side by side. Wait (bounded) for that instead of racing a clock.
         with lock:
             state["now"] += 1
             state["peak"] = max(state["peak"], state["now"])
-        time.sleep(0.6)
+            if state["now"] > 4:
+                overlap.set()
+        overlap.wait(timeout=8)
         with lock:
             state["now"] -= 1
         return PageExtractionResult(tests=[ExtractedTest(
             original_test_name="Hemoglobin", value="13.5", unit="g/dL", extraction_confidence=0.9)], page_notes=None)
 
+    from app.services import retrieval
+    from app.services.loinc_loader import get_alias_index
+    retrieval.get_index()          # production builds these at startup; keep that
+    get_alias_index()              # one-time cost out of the timed section
     started = time.monotonic()
     with patch("app.services.pipeline.llm_client.extract_page", side_effect=slow):
         threads = [threading.Thread(target=pipeline.process_document, args=(i,)) for i in ids]
@@ -133,7 +142,7 @@ def test_two_documents_process_at_the_same_time(tmp_path, monkeypatch):
     assert [d.status for d in docs] == [DocumentStatus.complete] * 2
     assert all(len(d.observations) == 4 for d in docs)
     assert state["peak"] > 4, "pages of BOTH documents should be in flight together"
-    assert elapsed < 2.0, f"{elapsed:.1f}s - documents ran one after the other"
+    assert elapsed < 7.0, f"{elapsed:.1f}s - documents ran one after the other"
     s.close()
 
 

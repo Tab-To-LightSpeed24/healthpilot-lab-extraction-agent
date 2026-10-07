@@ -248,7 +248,7 @@ actually correct."
 ## 6. Testing philosophy
 
 No test in this repo claims a result it didn't actually produce.
-- `backend/tests/` (343 tests at the latest run; 29 in the first build) exercise real code: real PDFs generated and
+- `backend/tests/` (359 tests at the latest run; 29 in the first build) exercise real code: real PDFs generated and
   parsed via PyMuPDF, a real SQLite DB, the real FastAPI app via
   `TestClient`, and the real 3-stage mapping control flow. The *only* thing
   mocked is the actual Gemini network call (one clearly-named boundary),
@@ -368,6 +368,16 @@ accuracy trade-off.
   requests and OCR, one-document-at-a-time page rendering, and single-flight, compact
   builds of the LOINC lookup tables (cold-start peak memory 375 MB → 179 MB measured).
 
+4. *Cheaper page preparation and fewer round trips* (from reading production feeds): opening
+   a 19-page PDF rendered 10 MB of 200-DPI PNGs before anything else could start (31 s on the
+   free Render CPU) and a global render lock made small documents wait behind it. Pages now
+   render lazily; text-rich digital pages go to the model as text only, the rest as a 150-DPI
+   JPEG (`LLM_PAGE_INPUT`); progress commits are throttled; AI LOINC picks with confidence ≥ 0.9
+   and human reviews are remembered (`learned_mappings`) so repeats skip the AI. Measured
+   (`docs/BENCHMARKS.md`): page preparation 4.80 → 0.38 CPU-seconds and 17.4 → 0.2 MB uploaded for
+   the six benchmark documents; a real six-document run finished in 51 s with ~95% of rows
+   matching the previous version.
+
 **Hardening** (`app/core/security.py`): optional shared API key, per-client rate limits,
 security headers, request ids, log redaction and a prompt-injection guard — a stopgap
 until real per-user auth.
@@ -376,7 +386,7 @@ until real per-user auth.
 document processes; when it ends, the header shows "Processed in X s"
 (`documents.processing_seconds`).
 
-**Honest limits:** the 12 s figure is from one real report on a fast machine; the
+**Honest limits:** the speed figures come from a fast machine; the
 Render free tier is far slower per CPU. Accuracy under the faster mapping is only
 indicatively measured (gold set of 40 rows: all 30 alias rows correct; for the other
 10 the right code was always among the 6 candidates sent to the LLM).

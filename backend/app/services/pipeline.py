@@ -10,7 +10,7 @@ from app.core.config import settings
 from app.core.db import SessionLocal
 from app.models.document import Document, DocumentStatus
 from app.models.observation import Observation, MappingStatus
-from app.services import pdf_utils, llm_client, loinc_mapping
+from app.services import learned_mappings, pdf_utils, llm_client, loinc_mapping
 from app.services.extraction.fallback import FallbackExtractor
 from app.services.extraction.validation import validate_tests
 from app.services.loinc_loader import get_alias_index, get_known_short_names
@@ -23,9 +23,14 @@ def _is_cancel_requested(db: Session, document_id: str) -> bool:
     """Re-reads just the cancel flag (not the whole ORM object) so a
     cooperative check between pages sees a cancellation requested by a
     different request/session, not a stale in-memory copy."""
-    return bool(
+    flag = bool(
         db.query(Document.cancel_requested).filter(Document.id == document_id).scalar()
     )
+    # End the read transaction: on SQLite an open read lock blocks every other writer's commit
+    # (another document's worker could stall for the whole busy timeout). Any pending progress
+    # changes are simply persisted - which is wanted anyway.
+    db.commit()
+    return flag
 
 
 def _touch(db: Session, doc: Document) -> None:
@@ -33,30 +38,34 @@ def _touch(db: Session, doc: Document) -> None:
     being processed' apart from 'crashed mid-job and never came back'."""
     doc.updated_at = datetime.now(timezone.utc)
     db.commit()
+    doc._last_commit = time.monotonic()
 
 
 MAX_PROGRESS_ENTRIES = 200
 
 
-def _progress(db: Session, doc: Document, message: str, level: str = "info") -> None:
-    """Appends one line to the document's live feed (shown in the UI while it
-    processes) and commits, which doubles as the worker heartbeat."""
+COMMIT_EVERY_SECONDS = 0.8
+
+
+def _progress(db: Session, doc: Document, message: str, level: str = "info", force: bool = False) -> None:
+    """Appends one line to the document's live feed (shown in the UI while it processes).
+    Commits - which doubles as the worker heartbeat - at most every ~0.8 s unless forced:
+    each commit is a network round trip to the database, and a big document emits dozens of
+    lines (that used to be ~40 s of pure waiting on a 19-page report). Page results, status
+    changes and the end of the job always commit."""
     log = list(doc.progress or [])
     log.append({"t": datetime.now(timezone.utc).isoformat(), "msg": message, "level": level})
     doc.progress = log[-MAX_PROGRESS_ENTRIES:]
     doc.updated_at = datetime.now(timezone.utc)
-    db.commit()
+    now = time.monotonic()
+    if force or now - getattr(doc, "_last_commit", 0.0) >= COMMIT_EVERY_SECONDS:
+        db.commit()
+        doc._last_commit = now
 
 
 def _short(text: str | None, limit: int = 90) -> str:
     text = " ".join((text or "").split())
     return text if len(text) <= limit else text[: limit - 1] + "\u2026"
-
-
-# Rendering pages is the memory/CPU-heavy part of starting a document; with several
-# documents processing at once, do that part one document at a time (the long LLM
-# waits that follow still overlap freely).
-_RENDER_LOCK = threading.Lock()
 
 
 class _CancelledWhileWaiting(Exception):
@@ -66,6 +75,17 @@ class _CancelledWhileWaiting(Exception):
 class _LlmSkipped(Exception):
     """A queued extraction that never started because the provider had already
     been judged unusable (or the job was cancelled)."""
+
+
+def _llm_inputs(page) -> tuple:
+    """(image bytes, text) for one page's AI request. A digital PDF page with a solid text
+    layer is sent as text only (nothing to render or upload, so it is much faster); anything
+    else gets a smaller JPEG. LLM_PAGE_INPUT = auto | image | text."""
+    mode = settings.llm_page_input
+    text = page.text
+    if text and (mode == "text" or (mode == "auto" and len(text) >= settings.llm_text_only_min_chars)):
+        return b"", text
+    return page.image_for_llm(), text
 
 
 def _describe(exc: BaseException) -> str:
@@ -90,12 +110,12 @@ def process_document(document_id: str, db: Session | None = None) -> None:
         doc.progress = []
         doc.pages_done = 0
         doc.processing_seconds = None
-        _progress(db, doc, "Picked up from the queue")
+        doc.error_message = None      # a retried/recovered job starts clean (no stale "[Recovered...]" note)
+        _progress(db, doc, "Picked up from the queue", force=True)
 
-        with _RENDER_LOCK:
-            pages = pdf_utils.load_pages(doc.raw_content, doc.content_type)
+        pages = pdf_utils.load_pages(doc.raw_content, doc.content_type)   # text only; images render lazily
         doc.num_pages = len(pages)
-        _progress(db, doc, f"Opened {doc.filename}: {len(pages)} page(s) to read")
+        _progress(db, doc, f"Opened {doc.filename}: {len(pages)} page(s) to read", force=True)
 
         alias_index = get_alias_index()
         any_failure = False
@@ -140,7 +160,7 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                 raise _LlmSkipped()
             t0 = time.monotonic()
             try:
-                res = llm_client.extract_page(pg.image_png, pg.text)
+                res = llm_client.extract_page(*_llm_inputs(pg))
             finally:
                 extract_secs[pg.page_number] = time.monotonic() - t0
             # Map this page's rows here too (in-memory retrieval + at most one
@@ -211,7 +231,7 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                     if future is not None:
                         result, prepared = _await(future)
                     else:
-                        result = llm_client.extract_page(page.image_png, page.text)
+                        result = llm_client.extract_page(*_llm_inputs(page))
                 except _CancelledWhileWaiting:
                     _finish_cancelled()
                     return
@@ -348,17 +368,19 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                 )
                 db.add(obs)
             map_secs += time.monotonic() - map_started
+            try:
+                learned_mappings.remember(
+                    db,
+                    [(t.original_test_name, t.specimen, t.unit, m["loinc_code"])
+                     for t, m in zip(result.tests, prepared)
+                     if m and m.get("mapping_stage") == "lexical_llm" and m.get("mapping_status") == "confirmed"
+                     and m.get("loinc_code") and (m.get("mapping_confidence") or 0) >= settings.learned_min_confidence],
+                    source="llm", confidence=settings.learned_min_confidence)
+            except Exception:
+                logger.exception("Could not remember mappings for document %s", document_id)
             pages_completed += 1
             doc.pages_done = pages_completed
             _touch(db, doc)
-            if _is_cancel_requested(db, document_id):
-                doc.status = DocumentStatus.cancelled
-                doc.error_message = (
-                    f"Cancelled after {pages_completed}/{len(pages)} page(s) by user request."
-                )
-                _progress(db, doc, "Cancelled at your request", "warn")
-                logger.info("Document %s cancelled after %s pages", document_id, pages_completed)
-                return
 
         if _is_cancel_requested(db, document_id):
             doc.status = DocumentStatus.cancelled
@@ -406,6 +428,10 @@ def process_document(document_id: str, db: Session | None = None) -> None:
             doc.processing_seconds = round(time.monotonic() - job_started, 1)
             _progress(db, doc, f"Failed: {_short(str(exc))}", "error")
     finally:
+        try:
+            db.commit()       # progress lines are committed lazily; make sure the last ones land
+        except Exception:
+            db.rollback()
         if "llm_stop" in locals():
             llm_stop.set()
         if "pool" in locals() and pool is not None:

@@ -18,19 +18,30 @@ class Settings(BaseSettings):
     mapping_llm_mode: str = "ambiguous"
     retrieval_accept_score: float = 1.3     # top candidate's normalised score needed to skip the LLM
     retrieval_accept_margin: float = 0.2    # ...and its lead over the runner-up (fraction of its score)
+    # An AI pick is remembered for next time only at/above this confidence (human reviews always are).
+    learned_min_confidence: float = 0.9
     mapping_batch_size: int = 25            # rows per batched verification call
     # LLM use is optional: when disabled, unreachable, over budget, or failing,
     # extraction falls back to the local rule-based parser (see
     # app/services/extraction/fallback.py) and results are flagged as such.
     llm_enabled: bool = True
     # How many pages of one document are sent to the LLM at the same time.
-    llm_max_concurrency: int = 12
+    llm_max_concurrency: int = 20
+    # What a page sends to the model: "auto" = text only when the PDF page has a solid text
+    # layer (no image to render/upload: much faster), else a JPEG; "image" = always the
+    # image (plus text); "text" = text whenever a text layer exists.
+    llm_page_input: str = "auto"
+    llm_text_only_min_chars: int = 400
+    # Optional lighter/faster model just for the LOINC-picking call ("" = same model).
+    gemini_mapping_model: str = ""
     # Process-wide ceiling on simultaneous LLM requests across ALL documents being
     # processed at once (each document may use up to llm_max_concurrency of these).
     llm_global_concurrency: int = 24
     # Documents processed at the same time (worker threads). Forced to 1 on SQLite,
     # whose single-writer locking makes concurrent jobs fail with "database is locked".
     worker_concurrency: int = 2
+    # SQLite is forced to one worker unless raised here (benchmarks / local experiments only).
+    sqlite_worker_concurrency: int = 1
     # Hard ceiling on LLM requests per server process (0 = unlimited). Used to
     # cap spend during manual/real-API test runs; further calls are refused.
     llm_call_cap: int = 0

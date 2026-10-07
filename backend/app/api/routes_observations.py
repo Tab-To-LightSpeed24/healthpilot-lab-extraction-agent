@@ -11,6 +11,7 @@ from app.models.document import Document
 from app.schemas.api import ObservationCreateIn, ObservationOut, ObservationReviewIn, ObservationUpdateIn
 from app.schemas.extraction import ExtractedTest
 from app.services.extraction.validation import validate_row
+from app.services import learned_mappings
 from app.services.loinc_loader import get_alias_index
 from app.services.loinc_mapping import map_observation
 
@@ -175,6 +176,9 @@ def review_observation(observation_id: str, body: ObservationReviewIn, db: Sessi
     obs.mapping_stage = "human_review"
     obs.mapping_confidence = 1.0
 
+    if obs.loinc_code:      # a human's choice is remembered for the same name + specimen + unit
+        learned_mappings.remember(db, [(obs.original_test_name, obs.specimen, obs.unit, obs.loinc_code)],
+                                  source="review", confidence=1.0)
     db.commit()
     db.refresh(obs)
     return obs
