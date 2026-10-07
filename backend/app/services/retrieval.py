@@ -215,7 +215,15 @@ def get_index() -> RetrievalIndex:
     return _index
 
 
+def _warm_all() -> None:
+    # One after another (not in parallel) so peak memory stays low on a small instance.
+    from app.services.loinc_loader import get_alias_index, get_known_short_names
+    get_index()
+    get_alias_index()
+    get_known_short_names()
+
+
 def warm_up_in_background() -> threading.Thread:
-    t = threading.Thread(target=get_index, name="retrieval-warmup", daemon=True)
+    t = threading.Thread(target=_warm_all, name="retrieval-warmup", daemon=True)
     t.start()
     return t

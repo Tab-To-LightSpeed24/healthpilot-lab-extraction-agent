@@ -22,7 +22,7 @@ services:
       - key: API_KEY
         sync: false
       - key: WORKER_CONCURRENCY
-        value: "3"
+        value: "2"
       - key: GEMINI_MODEL
         value: gemini-3.8-flash
       - key: CORS_ORIGINS

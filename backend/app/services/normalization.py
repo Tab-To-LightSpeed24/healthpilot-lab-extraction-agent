@@ -39,24 +39,28 @@ def build_alias_index(loinc_records: list[dict]) -> dict[str, dict]:
     observation's actual value/unit/specimen to disambiguate with -- context
     this purely-textual stage does not have.
     """
-    candidates: dict[str, set[str]] = {}
+    # Memory matters here (this runs once per process on a 512MB instance): keep ONE
+    # code per alias and flip it to "" when a second, different code claims it,
+    # instead of a set per alias, and accept any iterable so callers can stream
+    # rows rather than hold the whole table in memory.
+    owner: dict[str, str] = {}
     entry_by_code: dict[str, dict] = {}
     for rec in loinc_records:
-        canonical = rec["shortname"] or rec["long_common_name"]
-        entry_by_code[rec["loinc_num"]] = {"loinc_num": rec["loinc_num"], "canonical_name": canonical}
-        for alias in rec.get("aliases", []) + [rec["long_common_name"], rec.get("shortname") or ""]:
+        num = rec["loinc_num"]
+        entry_by_code[num] = {"loinc_num": num, "canonical_name": rec["shortname"] or rec["long_common_name"]}
+        for alias in (*rec.get("aliases", ()), rec["long_common_name"], rec.get("shortname") or ""):
             if not alias:
                 continue
             key = _clean(alias)
             if not key:
                 continue
-            candidates.setdefault(key, set()).add(rec["loinc_num"])
+            prev = owner.get(key)
+            if prev is None:
+                owner[key] = num
+            elif prev != num:
+                owner[key] = ""      # genuinely ambiguous -> dropped below
 
-    return {
-        key: entry_by_code[next(iter(codes))]
-        for key, codes in candidates.items()
-        if len(codes) == 1
-    }
+    return {key: entry_by_code[num] for key, num in owner.items() if num}
 
 
 def lookup_exact(original_test_name: str, alias_index: dict[str, dict]) -> Optional[dict]:

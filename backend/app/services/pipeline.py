@@ -1,7 +1,7 @@
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait as futures_wait
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -53,6 +53,16 @@ def _short(text: str | None, limit: int = 90) -> str:
     return text if len(text) <= limit else text[: limit - 1] + "\u2026"
 
 
+# Rendering pages is the memory/CPU-heavy part of starting a document; with several
+# documents processing at once, do that part one document at a time (the long LLM
+# waits that follow still overlap freely).
+_RENDER_LOCK = threading.Lock()
+
+
+class _CancelledWhileWaiting(Exception):
+    """The user cancelled while we were waiting on the AI."""
+
+
 class _LlmSkipped(Exception):
     """A queued extraction that never started because the provider had already
     been judged unusable (or the job was cancelled)."""
@@ -80,7 +90,8 @@ def process_document(document_id: str, db: Session | None = None) -> None:
         doc.pages_done = 0
         _progress(db, doc, "Picked up from the queue")
 
-        pages = pdf_utils.load_pages(doc.raw_content, doc.content_type)
+        with _RENDER_LOCK:
+            pages = pdf_utils.load_pages(doc.raw_content, doc.content_type)
         doc.num_pages = len(pages)
         _progress(db, doc, f"Opened {doc.filename}: {len(pages)} page(s) to read")
 
@@ -142,6 +153,31 @@ def process_document(document_id: str, db: Session | None = None) -> None:
             map_page_secs[pg.page_number] = time.monotonic() - m0
             return res, mappings
 
+        def _finish_cancelled():
+            llm_stop.set()
+            doc.status = DocumentStatus.cancelled
+            doc.error_message = f"Cancelled after {pages_completed}/{len(pages)} page(s) by user request."
+            _progress(db, doc, "Cancelled at your request", "warn")
+            logger.info("Document %s cancelled after %s pages", document_id, pages_completed)
+
+        def _await(future):
+            """Waits for one page's AI result in 1-second slices so a cancel is noticed
+            promptly and the heartbeat keeps proving this document is still alive."""
+            last_beat = time.monotonic()
+            while True:
+                done, _ = futures_wait([future], timeout=1.0)
+                if done:
+                    return future.result()
+                if _is_cancel_requested(db, document_id):
+                    raise _CancelledWhileWaiting()
+                if time.monotonic() - last_beat > 10:
+                    _touch(db, doc)
+                    last_beat = time.monotonic()
+
+        if _is_cancel_requested(db, document_id):       # cancelled while queued/opening
+            _finish_cancelled()
+            return
+
         if llm_available and pages:
             pool = ThreadPoolExecutor(
                 max_workers=max(1, min(settings.llm_max_concurrency, len(pages))),
@@ -171,9 +207,12 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                 try:
                     future = extract_futures.get(page.page_number)
                     if future is not None:
-                        result, prepared = future.result()
+                        result, prepared = _await(future)
                     else:
                         result = llm_client.extract_page(page.image_png, page.text)
+                except _CancelledWhileWaiting:
+                    _finish_cancelled()
+                    return
                 except _LlmSkipped:
                     llm_available = False
                     llm_skip_reason = llm_skip_reason or "AI extraction was abandoned after an earlier failure"

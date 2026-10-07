@@ -1,6 +1,7 @@
 import csv
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Iterator
 
@@ -16,6 +17,7 @@ DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "loinc_lab_active.
 OVERRIDES_PATH = Path(__file__).resolve().parent.parent / "data" / "loinc_alias_overrides.json"
 
 _alias_index_cache: dict[str, dict] | None = None
+_build_lock = threading.RLock()   # one-time in-memory builds run once, not once per worker
 
 # Render's free tier caps a web service at 512MB total. Materializing all
 # ~62k codes and their ~1.7M aliases as two separate in-memory Python lists
@@ -202,14 +204,16 @@ def get_known_short_names() -> set[str]:
     plausible real test name, never to map it. ~8k entries, <1MB."""
     global _short_names_cache
     if _short_names_cache is None:
-        names: set[str] = set()
-        for rec in _iter_loinc_rows():
-            for cand in (rec["shortname"], rec["component"], *rec["aliases"]):
-                if cand and len(cand) <= 10:
-                    key = _clean(cand)
-                    if key and len(key) <= 8:
-                        names.add(key)
-        _short_names_cache = names
+        with _build_lock:
+            if _short_names_cache is None:
+                names: set[str] = set()
+                for rec in _iter_loinc_rows():
+                    for cand in (rec["shortname"], rec["component"], *rec["aliases"]):
+                        if cand and len(cand) <= 10:
+                            key = _clean(cand)
+                            if key and len(key) <= 8:
+                                names.add(key)
+                _short_names_cache = names
     return _short_names_cache
 
 
@@ -229,13 +233,21 @@ def load_alias_overrides() -> dict[str, str]:
 def get_alias_index() -> dict[str, dict]:
     global _alias_index_cache
     if _alias_index_cache is None:
-        records = load_loinc_records()
-        index = build_alias_index(records)
+        # Single-flight: several document workers can hit a cold cache at once, and
+        # building it concurrently multiplied peak memory (measured ~375MB vs ~263MB
+        # for one build) - enough to threaten a 512MB instance.
+        with _build_lock:
+            if _alias_index_cache is None:
+                canonical_by_code: dict[str, str] = {}
 
-        canonical_by_code = {rec["loinc_num"]: (rec["shortname"] or rec["long_common_name"]) for rec in records}
-        for cleaned_alias, loinc_num in load_alias_overrides().items():
-            if loinc_num in canonical_by_code:
-                index[cleaned_alias] = {"loinc_num": loinc_num, "canonical_name": canonical_by_code[loinc_num]}
+                def rows():
+                    for rec in _iter_loinc_rows():          # streamed, never the whole table at once
+                        canonical_by_code[rec["loinc_num"]] = rec["shortname"] or rec["long_common_name"]
+                        yield rec
 
-        _alias_index_cache = index
+                index = build_alias_index(rows())
+                for cleaned_alias, loinc_num in load_alias_overrides().items():
+                    if loinc_num in canonical_by_code:
+                        index[cleaned_alias] = {"loinc_num": loinc_num, "canonical_name": canonical_by_code[loinc_num]}
+                _alias_index_cache = index
     return _alias_index_cache

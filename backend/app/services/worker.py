@@ -36,11 +36,16 @@ from app.services.pipeline import process_document
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = 2.0
-STUCK_AFTER = timedelta(minutes=10)
+# A live job refreshes its heartbeat (updated_at) every few seconds - on every progress
+# line and every ~10s while waiting on the AI - so a heartbeat this stale means the
+# process that owned the job died (crash, out-of-memory kill, redeploy).
+STUCK_AFTER = timedelta(minutes=3)
+# At startup nothing in THIS process owns any job yet, so be much quicker about it.
+STARTUP_STUCK_AFTER = timedelta(seconds=45)
 
 
-def recover_stuck_documents(db: Session) -> int:
-    cutoff = datetime.now(timezone.utc) - STUCK_AFTER
+def recover_stuck_documents(db: Session, older_than: timedelta = STUCK_AFTER) -> int:
+    cutoff = datetime.now(timezone.utc) - older_than
     stuck = (
         db.query(Document)
         .filter(Document.status == DocumentStatus.processing, Document.updated_at < cutoff)
@@ -139,7 +144,7 @@ def start_worker() -> threading.Event:
     shutdown) can stop the loop."""
     db = SessionLocal()
     try:
-        recovered = recover_stuck_documents(db)
+        recovered = recover_stuck_documents(db, STARTUP_STUCK_AFTER)
         if recovered:
             logger.info("Recovered %s stuck document(s) at startup", recovered)
     finally:

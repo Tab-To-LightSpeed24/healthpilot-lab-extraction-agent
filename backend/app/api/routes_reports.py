@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from typing import List, Tuple
 from urllib.parse import quote
 
@@ -155,6 +156,18 @@ def get_report_file(document_id: str, db: Session = Depends(get_db)):
     )
 
 
+STALE_HEARTBEAT_SECONDS = 60
+
+
+def _heartbeat_age_seconds(doc: Document) -> float:
+    beat = doc.updated_at or doc.uploaded_at
+    if beat is None:
+        return 0.0
+    if beat.tzinfo is None:
+        beat = beat.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - beat).total_seconds()
+
+
 @router.post("/{document_id}/cancel", response_model=DocumentOut)
 def cancel_report(document_id: str, db: Session = Depends(get_db)):
     doc = db.query(Document).filter(Document.id == document_id).first()
@@ -170,12 +183,18 @@ def cancel_report(document_id: str, db: Session = Depends(get_db)):
         doc.status = DocumentStatus.cancelled
         doc.cancel_requested = True
         doc.error_message = "Cancelled by user request before processing started."
+    elif _heartbeat_age_seconds(doc) > STALE_HEARTBEAT_SECONDS:
+        # Marked "processing" but nothing has touched it for a while: the worker that
+        # owned it died (crash / out-of-memory / redeploy). No one is left to notice a
+        # cooperative flag, so finish the cancellation here instead of leaving it
+        # stuck on "Cancelling" forever.
+        doc.status = DocumentStatus.cancelled
+        doc.cancel_requested = True
+        doc.error_message = "Cancelled by user request (the processing worker was no longer running)."
     else:
-        # Already claimed and running: the worker checks this flag between
-        # pages (see pipeline.process_document) and will stop there, which
-        # is exactly the control this is for -- e.g. stopping a runaway
-        # multi-page document partway through instead of burning through the
-        # rest of its pages' API calls.
+        # Already claimed and running: the worker checks this flag every second while
+        # waiting on the AI and between pages (see pipeline.process_document), so it
+        # stops promptly instead of burning through the rest of the document's calls.
         doc.cancel_requested = True
 
     db.commit()
