@@ -17,6 +17,11 @@ export const apiBase = () => LOCAL_OVERRIDE || (IS_LOCAL_HOST ? LOCAL_API_BASE :
 
 const DEFAULT_TIMEOUT_MS = 45000;
 
+// Shared API key (sent as X-API-Key). Kept in localStorage purely as a
+// per-browser convenience; the server decides whether one is required.
+export const getApiKey = () => { try { return localStorage.getItem("hp.key") || ""; } catch { return ""; } };
+export const setApiKey = (k) => { try { k ? localStorage.setItem("hp.key", k) : localStorage.removeItem("hp.key"); } catch { /* storage blocked */ } };
+
 export class ApiError extends Error {
   constructor(message, { status = 0, url = "", aborted = false } = {}) {
     super(message);
@@ -41,7 +46,9 @@ export async function request(path, { method = "GET", headers, body, signal, tim
   }
   let resp;
   try {
-    resp = await fetch(url, { method, headers, body, signal: controller.signal });
+    const key = getApiKey();
+    const allHeaders = key ? { ...(headers || {}), "X-API-Key": key } : headers;
+    resp = await fetch(url, { method, headers: allHeaders, body, signal: controller.signal });
   } catch (err) {
     if (err.name === "AbortError") {
       if (timedOut) {
@@ -66,7 +73,8 @@ export async function request(path, { method = "GET", headers, body, signal, tim
       const j = JSON.parse(text);
       detail = typeof j.detail === "string" ? j.detail : JSON.stringify(j.detail ?? j);
     } catch { /* not JSON */ }
-    console.error("[api] non-OK response:", url, resp.status, text);
+    if (resp.status === 401) window.dispatchEvent(new CustomEvent("hp:auth-required"));
+    else console.error("[api] non-OK response:", url, resp.status, text);
     throw new ApiError(detail || `${resp.status} ${resp.statusText}`, { status: resp.status, url });
   }
   if (resp.status === 204 || as === "none") return null;

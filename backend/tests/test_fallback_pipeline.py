@@ -67,7 +67,7 @@ def test_llm_failure_diverts_to_fallback_and_flags_the_document(client):
 
 def test_fallback_mapping_makes_no_llm_call_and_never_invents_a_code(client):
     with patch("app.services.pipeline.llm_client.extract_page", side_effect=RuntimeError("down")), \
-         patch("app.services.loinc_mapping.llm_client.verify_mapping") as verify:
+         patch("app.services.loinc_mapping.llm_client.verify_mappings_batch") as verify:
         detail = _upload(client, "r.pdf", _table_pdf(TABLE_LINES))
 
     verify.assert_not_called()
@@ -86,7 +86,10 @@ def test_one_llm_failure_stops_llm_attempts_for_the_rest_of_the_document(client)
     with patch("app.services.pipeline.llm_client.extract_page", mock):
         detail = _upload(client, "two.pdf", two_pages)
 
-    assert mock.call_count == 1, "a dead provider must cost one bounded attempt per document, not one per page"
+    # Pages are sent concurrently, so up to one attempt per page may already be
+    # in flight when the first failure lands - but never any retries beyond that.
+    assert 1 <= mock.call_count <= 2, "a dead provider must cost at most one attempt per page"
+    assert detail["used_fallback"] is True
     assert detail["status"] == "complete"
     pages = {o["page_number"] for o in detail["observations"]}
     assert pages == {1, 2}
@@ -97,10 +100,16 @@ def test_malformed_model_output_only_diverts_that_one_page(client):
         tests=[ExtractedTest(original_test_name="Glucose", value="98", unit="mg/dL", extraction_confidence=0.95)],
         page_notes=None,
     )
-    mock = MagicMock(side_effect=[ValueError("bad json"), ok])
+    def by_page_text(image_png, text_layer):
+        # Pages are extracted concurrently, so key the reply on the page, not call order.
+        if text_layer and "Page two" in text_layer:
+            return ok
+        raise ValueError("bad json")
+
+    mock = MagicMock(side_effect=by_page_text)
     two_pages = _table_pdf(TABLE_LINES, ["Page two", "Glucose      98    mg/dL    70-99"])
     with patch("app.services.pipeline.llm_client.extract_page", mock), \
-         patch("app.services.loinc_mapping.llm_client.verify_mapping", return_value={"chosen_loinc_num": None, "confidence": 0}):
+         patch("app.services.loinc_mapping.llm_client.verify_mappings_batch", side_effect=lambda items: [{"chosen_loinc_num": None, "confidence": 0} for _ in items]):
         detail = _upload(client, "two.pdf", two_pages)
 
     assert mock.call_count == 2, "a malformed reply on one page must not disable the LLM for the next"

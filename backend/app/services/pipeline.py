@@ -1,5 +1,7 @@
 import logging
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -49,6 +51,11 @@ def _progress(db: Session, doc: Document, message: str, level: str = "info") -> 
 def _short(text: str | None, limit: int = 90) -> str:
     text = " ".join((text or "").split())
     return text if len(text) <= limit else text[: limit - 1] + "\u2026"
+
+
+class _LlmSkipped(Exception):
+    """A queued extraction that never started because the provider had already
+    been judged unusable (or the job was cancelled)."""
 
 
 def _describe(exc: BaseException) -> str:
@@ -102,8 +109,50 @@ def process_document(document_id: str, db: Session | None = None) -> None:
             _progress(db, doc, "AI extraction is turned off - using local extraction", "warn")
             fallback.prefetch(pages)  # LLM off: start OCR on scanned pages right away
 
+        # Fan-out: every page's LLM call is submitted at once and runs
+        # concurrently (these are pure network calls - no DB access - so the
+        # single main-thread session stays the only writer). The loop below
+        # then consumes the results in page order, so everything downstream
+        # (mapping, saving, progress, cancellation) behaves as before.
+        llm_stop = threading.Event()
+        extract_secs: dict[int, float] = {}
+        map_page_secs: dict[int, float] = {}
+        extract_futures: dict = {}
+        pool = None
+        map_secs = 0.0
+        mapping_llm_ok = True
+
+        def _extract_task(pg):
+            if llm_stop.is_set():
+                raise _LlmSkipped()
+            t0 = time.monotonic()
+            try:
+                res = llm_client.extract_page(pg.image_png, pg.text)
+            finally:
+                extract_secs[pg.page_number] = time.monotonic() - t0
+            # Map this page's rows here too (in-memory retrieval + at most one
+            # batched LLM call), so matching overlaps with the other pages
+            # still being read instead of queueing up behind them.
+            m0 = time.monotonic()
+            try:
+                mappings = loinc_mapping.map_rows(res.tests, alias_index, use_llm=not llm_stop.is_set())
+            except Exception:
+                logger.exception("Page mapping failed for document %s page %s", document_id, pg.page_number)
+                mappings = None
+            map_page_secs[pg.page_number] = time.monotonic() - m0
+            return res, mappings
+
+        if llm_available and pages:
+            pool = ThreadPoolExecutor(
+                max_workers=max(1, min(settings.llm_max_concurrency, len(pages))),
+                thread_name_prefix="extract",
+            )
+            extract_futures = {pg.page_number: pool.submit(_extract_task, pg) for pg in pages}
+            _progress(db, doc, f"Sending {len(pages)} page(s) to the AI model in parallel")
+
         for page in pages:
             if _is_cancel_requested(db, document_id):
+                llm_stop.set()
                 doc.status = DocumentStatus.cancelled
                 doc.error_message = (
                     f"Cancelled after {pages_completed}/{len(pages)} page(s) by user request."
@@ -115,12 +164,19 @@ def process_document(document_id: str, db: Session | None = None) -> None:
             label = f"Page {page.page_number}/{len(pages)}"
             doc.pages_done = pages_completed
             result = None
+            prepared = None
             source = "llm"
             llm_error = None
             if llm_available:
-                _progress(db, doc, f"{label}: sending to the AI model for extraction")
                 try:
-                    result = llm_client.extract_page(page.image_png, page.text)
+                    future = extract_futures.get(page.page_number)
+                    if future is not None:
+                        result, prepared = future.result()
+                    else:
+                        result = llm_client.extract_page(page.image_png, page.text)
+                except _LlmSkipped:
+                    llm_available = False
+                    llm_skip_reason = llm_skip_reason or "AI extraction was abandoned after an earlier failure"
                 except Exception as exc:
                     logger.exception(
                         "LLM extraction failed for document %s page %s", document_id, page.page_number
@@ -133,6 +189,7 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                     if not isinstance(exc, ValueError):
                         llm_available = False
                         llm_skip_reason = llm_error
+                        llm_stop.set()
                         fallback.prefetch(p for p in pages if p.page_number > page.page_number)
 
             if result is None:
@@ -194,28 +251,22 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                     doc.fallback_reason = reason
 
             if source == "llm":
-                _progress(db, doc, f"{label}: the AI found {len(result.tests)} test row(s)")
+                took = extract_secs.get(page.page_number)
+                _progress(db, doc, f"{label}: the AI found {len(result.tests)} test row(s)"
+                          + (f" ({took:.1f}s)" if took is not None else ""))
             _progress(db, doc, f"{label}: matching {len(result.tests)} row(s) to LOINC codes")
-            for test in result.tests:
+            map_started = time.monotonic()
+            if prepared is None:
+                # Local (fallback) pages, or a page whose threaded mapping failed.
                 try:
-                    mapping = loinc_mapping.map_observation(
-                        db=db,
-                        alias_index=alias_index,
-                        original_test_name=test.original_test_name,
-                        value=test.value,
-                        unit=test.unit,
-                        specimen=test.specimen,
-                        method=test.method,
-                        timing=test.timing,
-                        use_llm=(source == "llm" and llm_available),
+                    prepared = loinc_mapping.map_rows(
+                        result.tests, alias_index, use_llm=(source == "llm" and mapping_llm_ok)
                     )
-                    if mapping.pop("llm_failed", False):
-                        llm_available = False
-                        llm_skip_reason = llm_skip_reason or "LLM mapping verification failed"
                 except Exception:
-                    logger.exception(
-                        "Mapping failed for '%s' in document %s", test.original_test_name, document_id
-                    )
+                    logger.exception("Mapping failed for document %s page %s", document_id, page.page_number)
+                    prepared = [None] * len(result.tests)
+            for test, mapping in zip(result.tests, prepared):
+                if mapping is None:
                     mapping = {
                         "normalized_test_name": test.original_test_name,
                         "loinc_code": None,
@@ -225,6 +276,10 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                         "mapping_stage": "error",
                         "mapping_rationale": "Mapping pipeline raised an exception; needs manual review.",
                     }
+                if mapping.pop("llm_failed", False):
+                    # Only mapping verification is unavailable; pages the AI
+                    # already read stay AI-extracted (don't re-read them locally).
+                    mapping_llm_ok = False
 
                 obs = Observation(
                     document_id=document_id,
@@ -251,6 +306,7 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                     raw_extraction=test.model_dump(),
                 )
                 db.add(obs)
+            map_secs += time.monotonic() - map_started
             pages_completed += 1
             doc.pages_done = pages_completed
             _touch(db, doc)
@@ -285,10 +341,17 @@ def process_document(document_id: str, db: Session | None = None) -> None:
         if doc.status == DocumentStatus.failed:
             _progress(db, doc, "Finished without any extracted results", "error")
         else:
+            total_secs = time.monotonic() - doc_started
             _progress(
                 db, doc,
-                f"Finished - {total_rows} observation(s) extracted"
-                + (" (some pages could not be read)" if any_failure else ""),
+                f"Finished in {total_secs:.1f}s - {total_rows} observation(s) extracted"
+                + (" (some pages could not be read)" if any_failure else "")
+                + f" [slowest page {max(extract_secs.values(), default=0):.1f}s, LOINC matching {max(map_page_secs.values(), default=0):.1f}s longest page]",
+            )
+            logger.info(
+                "Document %s timing: total=%.1fs pages=%s ai_max=%.1fs ai_sum=%.1fs mapping=%.1fs",
+                document_id, total_secs, len(pages), max(extract_secs.values(), default=0),
+                sum(extract_secs.values()), map_secs,
             )
         db.commit()
     except Exception as exc:
@@ -300,6 +363,10 @@ def process_document(document_id: str, db: Session | None = None) -> None:
             doc.error_message = str(exc)
             _progress(db, doc, f"Failed: {_short(str(exc))}", "error")
     finally:
+        if "llm_stop" in locals():
+            llm_stop.set()
+        if "pool" in locals() and pool is not None:
+            pool.shutdown(wait=False, cancel_futures=True)
         if fallback is not None:
             fallback.close()
         if owns_session:

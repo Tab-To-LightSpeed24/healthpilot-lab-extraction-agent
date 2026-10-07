@@ -22,7 +22,7 @@ export function derivePhase(doc) {
 
   const step = feedStep(feed);
   const titles = ["Waiting in the queue", "Opening your document", "Extracting results", "Matching LOINC codes", "Finishing up"];
-  const page = total ? ` · page ${Math.min(done + 1, total)} of ${total}` : "";
+  const page = total ? ` · ${done} of ${total} pages done` : "";
   return {
     phase: ["queued", "opening", "extracting", "matching", "done"][step],
     step,

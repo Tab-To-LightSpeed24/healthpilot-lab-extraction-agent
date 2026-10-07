@@ -9,7 +9,7 @@
 //  * Switching reports is never blocked: an open edit form is just state, and
 //    leaving it asks (non-blocking dialog) only if it has unsaved changes.
 
-import { request, jsonBody, isAbort, apiBase } from "./api.js";
+import { request, jsonBody, isAbort, apiBase, getApiKey, setApiKey } from "./api.js";
 import { esc, icon, html, reconcile, fmtDateTime, fmtBytes, toast, openModal, closeTopModal, hasModal, confirmDialog, debounce } from "./ui.js";
 import { DocumentViewer, kindOf } from "./viewer.js";
 import { LivePanel } from "./live.js";
@@ -867,5 +867,27 @@ async function init() {
   if (wanted) selectReport(wanted, { fromHash: true });
   schedulePoll();
 }
+/* ---------- API key prompt (shown only when the server answers 401) ---------- */
+let keyModalOpen = false;
+window.addEventListener("hp:auth-required", () => {
+  if (keyModalOpen) return;
+  keyModalOpen = true;
+  const node = html(`<div class="modal"><div class="modal-head"><h3>API key required</h3></div>
+    <div class="modal-body"><p class="lead">${getApiKey() ? "That key was rejected." : "This server is protected."} Enter the API key to continue.</p>
+      <label class="field">API key<input class="input" type="password" autocomplete="off" spellcheck="false" data-key></label>
+      <div class="form-actions" style="margin-top:10px"><span class="msg err" data-err></span></div></div>
+    <div class="modal-foot"><button class="btn btn-primary" data-go>Continue</button></div></div>`);
+  const m = openModal(node, { onClose: () => { keyModalOpen = false; }, initialFocus: () => node.querySelector("[data-key]") });
+  const input = node.querySelector("[data-key]");
+  const go = () => {
+    const v = input.value.trim();
+    if (!v) { node.querySelector("[data-err]").textContent = "Enter a key."; return; }
+    setApiKey(v); m.close(true); loadReports();
+    if (state.selectedId) selectReport(state.selectedId, { fromHash: true });
+  };
+  node.querySelector("[data-go]").addEventListener("click", go);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+});
+
 window.__hp = { state, viewer };   // handy for debugging in the console
 init();

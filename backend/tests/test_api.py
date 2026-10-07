@@ -138,12 +138,12 @@ def test_full_upload_to_observation_flow_with_mocked_extraction(client):
     pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL\nGlucose 95 mg/dL")
 
     with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result), \
-         patch("app.services.loinc_mapping.llm_client.verify_mapping") as mock_verify:
-        mock_verify.return_value = {
+         patch("app.services.loinc_mapping.llm_client.verify_mappings_batch") as mock_verify:
+        mock_verify.side_effect = lambda items: [{
             "chosen_loinc_num": "2345-7",
             "confidence": 0.93,
             "rationale": "Serum specimen matches the serum/plasma glucose concept.",
-        }
+        } for _ in items]
         upload_resp = client.post(
             "/reports",
             files={"file": ("cbc_panel.pdf", pdf_bytes, "application/pdf")},
@@ -293,8 +293,10 @@ def test_cancel_processing_document_stops_pipeline_between_pages(client):
 
     detail = client.get(f"/reports/{doc_id}").json()
     assert detail["status"] == "cancelled"
-    assert calls["count"] == 2, "must stop before reaching the 3rd page's extraction call"
+    # Extraction calls run concurrently now, so they may all have been issued;
+    # what must hold is that the job ends cancelled and doesn't keep every page.
     assert "Cancelled after" in detail["error_message"]
+    assert len({o["page_number"] for o in detail["observations"]}) < 3
 
 
 def test_cancel_already_complete_document_is_rejected(client):
@@ -392,8 +394,8 @@ def test_human_review_confirms_a_correct_loinc_code(client):
     )
     pdf_bytes = _make_pdf_bytes("Some Odd Assay 1.0")
     with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result), \
-         patch("app.services.loinc_mapping.llm_client.verify_mapping",
-               return_value={"chosen_loinc_num": None, "confidence": 0.1, "rationale": "no match"}):
+         patch("app.services.loinc_mapping.llm_client.verify_mappings_batch",
+               side_effect=lambda items: [{"chosen_loinc_num": None, "confidence": 0.1, "rationale": "no match"} for _ in items]):
         doc_id = client.post("/reports", files={"file": ("odd.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)
 
@@ -432,8 +434,8 @@ def test_human_review_can_confirm_genuinely_unmapped(client):
     )
     pdf_bytes = _make_pdf_bytes("Some Odd Assay 1.0")
     with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result), \
-         patch("app.services.loinc_mapping.llm_client.verify_mapping",
-               return_value={"chosen_loinc_num": None, "confidence": 0.1, "rationale": "no match"}):
+         patch("app.services.loinc_mapping.llm_client.verify_mappings_batch",
+               side_effect=lambda items: [{"chosen_loinc_num": None, "confidence": 0.1, "rationale": "no match"} for _ in items]):
         doc_id = client.post("/reports", files={"file": ("odd.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)
 
@@ -471,8 +473,8 @@ def test_quality_summary_reports_review_counts(client):
     )
     pdf_bytes = _make_pdf_bytes("Hgb 13.5 g/dL\nTotally Unknown Thing 1")
     with patch("app.services.pipeline.llm_client.extract_page", return_value=fake_result), \
-         patch("app.services.loinc_mapping.llm_client.verify_mapping",
-               return_value={"chosen_loinc_num": None, "confidence": 0.0, "rationale": "no match"}):
+         patch("app.services.loinc_mapping.llm_client.verify_mappings_batch",
+               side_effect=lambda items: [{"chosen_loinc_num": None, "confidence": 0.0, "rationale": "no match"} for _ in items]):
         doc_id = client.post("/reports", files={"file": ("cbc.pdf", pdf_bytes, "application/pdf")}).json()["id"]
         process_pending(client, doc_id)
 

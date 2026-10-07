@@ -13,6 +13,15 @@ from app.services.loinc_loader import seed_loinc_table
 # rolled back afterward, instead of a fresh from-scratch database per test.
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limiter():
+    """Every test client shares one IP; without this the per-minute limits
+    would accumulate across the whole suite and start returning 429."""
+    from app.core.security import limiter
+    limiter.reset()
+    yield
+
+
 @pytest.fixture(scope="session")
 def _seeded_engine():
     engine = create_engine(

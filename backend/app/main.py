@@ -2,17 +2,21 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import routes_reports, routes_observations, routes_loinc
 from app.core.config import settings
 from app.core.db import engine, SessionLocal
 from app.core.migrate import run_migrations
+from app.core.security import (
+    configure_logging, rate_limit_general, require_api_key, security_middleware,
+)
 from app.services.loinc_loader import seed_loinc_table
+from app.services.retrieval import warm_up_in_background
 from app.services.worker import start_worker
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -50,11 +54,13 @@ async def lifespan(app: FastAPI):
     # regardless of the exact low-level cause.
     try:
         count = await asyncio.to_thread(_run_startup_migrations_and_seed)
+        configure_logging()   # Alembic resets the root logger; restore level, format and redaction
         logger.info("LOINC reference table ready: %s codes", count)
     except Exception:
         logger.exception("Startup migration/seeding failed")
         raise
 
+    warm_up_in_background()   # build the in-memory LOINC index before the first upload needs it
     stop_worker = start_worker()
     yield
     stop_worker.set()
@@ -69,6 +75,7 @@ app = FastAPI(
 cors_kwargs = {
     "allow_methods": ["*"],
     "allow_headers": ["*"],
+    "expose_headers": ["X-Request-ID", "Retry-After"],
 }
 if settings.cors_origins.strip() == "*":
     # Under W3C CORS spec, Access-Control-Allow-Origin cannot be literal "*" when
@@ -80,7 +87,15 @@ else:
     cors_kwargs["allow_origins"] = settings.cors_origins_list
     cors_kwargs["allow_credentials"] = True
 
+app.middleware("http")(security_middleware)
+# Added last so CORS is the outermost layer: preflights and even 401/429
+# responses still carry CORS headers the browser needs to read them.
 app.add_middleware(CORSMiddleware, **cors_kwargs)
+
+if not settings.api_key:
+    logger.warning("API_KEY is not set: the API is open to anyone who can reach it")
+if settings.cors_origins.strip() == "*":
+    logger.warning("CORS_ORIGINS is '*': restrict it to your frontend origin in production")
 
 
 @app.get("/health")
@@ -88,6 +103,7 @@ def health():
     return {"status": "ok"}
 
 
-app.include_router(routes_reports.router)
-app.include_router(routes_observations.router)
-app.include_router(routes_loinc.router)
+_protected = [Depends(require_api_key), Depends(rate_limit_general)]
+app.include_router(routes_reports.router, dependencies=_protected)
+app.include_router(routes_observations.router, dependencies=_protected)
+app.include_router(routes_loinc.router, dependencies=_protected)

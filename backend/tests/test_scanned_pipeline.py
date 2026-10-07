@@ -38,6 +38,8 @@ def _rows(detail):
 @pytest.fixture()
 def llm_down():
     with patch("app.services.pipeline.llm_client.extract_page", side_effect=RuntimeError("provider down")), \
+         patch("app.services.loinc_mapping.llm_client.verify_mappings_batch",
+               side_effect=AssertionError("fallback must not call the LLM")), \
          patch("app.services.loinc_mapping.llm_client.verify_mapping",
                side_effect=AssertionError("fallback must not call the LLM")):
         yield

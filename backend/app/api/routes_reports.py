@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session, defer
 
 from app.core.config import settings
 from app.core.db import get_db
+from app.core.security import rate_limit_uploads
 from app.models.document import Document, DocumentStatus
 from app.models.observation import Observation
 from app.schemas.api import DocumentOut, DocumentDetailOut, QualitySummary
@@ -63,7 +64,7 @@ async def _read_and_validate(file: UploadFile) -> Tuple[bytes, str]:
     return raw, content_type
 
 
-@router.post("", response_model=DocumentOut, status_code=201)
+@router.post("", response_model=DocumentOut, status_code=201, dependencies=[Depends(rate_limit_uploads)])
 async def upload_report(file: UploadFile = File(...), db: Session = Depends(get_db)):
     raw, content_type = await _read_and_validate(file)
 
@@ -85,7 +86,7 @@ async def upload_report(file: UploadFile = File(...), db: Session = Depends(get_
     return doc
 
 
-@router.post("/batch", response_model=List[DocumentOut], status_code=201)
+@router.post("/batch", response_model=List[DocumentOut], status_code=201, dependencies=[Depends(rate_limit_uploads)])
 async def upload_reports_batch(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")

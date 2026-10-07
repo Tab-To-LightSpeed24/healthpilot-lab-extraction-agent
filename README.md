@@ -280,6 +280,29 @@ Current head adds extraction provenance (`extraction_source`, `is_edited`,
 (`validation_notes`, `suggested_value`), plus the live progress feed
 (`documents.progress`, `documents.pages_done`).
 
+### Processing speed
+
+Pages of a document are read by the LLM **concurrently** (`LLM_MAX_CONCURRENCY`, default 12),
+and each page's LOINC matching runs inside that page's task: an **in-memory index**
+(`app/services/retrieval.py`, ~1 ms per lookup) shortlists candidates and **one batched LLM
+call per page** (not per row) settles the ambiguous ones (`MAPPING_LLM_MODE`:
+`ambiguous` default / `all` / `off`). `GEMINI_REASONING_EFFORT=low` keeps the model's
+thinking short. Measured on a real 12-page, 56-row report: ~12 s end to end (previously
+minutes when pages and rows were processed one after another). `LLM_CALL_CAP` sets a hard
+ceiling on LLM requests per server process (0 = unlimited) for cost-controlled test runs.
+
+### Security hardening
+
+- **Shared API key** (`API_KEY`): when set, every route except `/health` needs an
+  `X-API-Key` header; the UI prompts for it once. A stopgap, not per-user auth.
+- **Rate limiting** (`RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_UPLOADS_PER_MINUTE`):
+  per client IP, per instance (a shared store would be needed for a global limit).
+- **Security headers** on every response, HSTS over HTTPS, and `X-Request-ID`
+  on responses and in every log line.
+- **Log redaction**: API keys and bearer tokens are masked before they reach logs.
+- **Prompt-injection guard**: page text is treated as untrusted data in both prompts.
+- Set `CORS_ORIGINS` to your frontend origin in production (default `*`).
+
 ## Deployment
 
 - **Backend**: Render, via `render.yaml` (Blueprint): a free Postgres instance

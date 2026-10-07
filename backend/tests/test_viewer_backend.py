@@ -167,7 +167,7 @@ def test_processing_writes_an_ordered_human_readable_feed(client):
 
     expected_in_order = ["Picked up from the queue", "Opened r.txt", "AI extraction is turned off",
                          "Page 1/1: reading the text locally", "found 2 test row(s)",
-                         "matching 2 row(s) to LOINC", "Finished - 2 observation(s)"]
+                         "matching 2 row(s) to LOINC", "2 observation(s) extracted"]
     cursor = 0
     for needle in expected_in_order:
         idx = next((i for i in range(cursor, len(msgs)) if needle in msgs[i]), None)
@@ -186,7 +186,7 @@ def test_an_llm_failure_is_narrated_in_the_feed(client, monkeypatch):
         process_pending(client, doc["id"])
     feed = client.get(f"/reports/{doc['id']}").json()["progress"]
     warn = [e for e in feed if e["level"] == "warn"]
-    assert any("sending to the AI model" in e["msg"] for e in feed)
+    assert any("to the AI model in parallel" in e["msg"] for e in feed)
     assert any("AI unavailable" in e["msg"] and "insufficient credits" in e["msg"] for e in warn)
 
 

@@ -1,117 +1,161 @@
-"""Three-stage LOINC mapping against the full ~62k-code Laboratory/ACTIVE
-LOINC reference table (see app/services/loinc_loader.py for provenance).
+"""LOINC mapping against the Laboratory/ACTIVE LOINC reference table.
 
 1. Deterministic alias/exact match (normalization.lookup_exact) -> confirmed,
-   high confidence, no model call. With the real official RELATEDNAMES2
-   synonym lists (not a small hand-typed list), this stage alone now covers
-   the large majority of common test names and abbreviations.
-2. Lexical candidate shortlist: token-overlap search against the DB (name,
-   component, and alias columns) -> top-k candidates. NOTE: this replaced an
-   earlier embedding-similarity design. Embedding all ~62k candidate codes
-   via the Gemini API (one call per code) is not viable on the available
-   quota/time -- it would mean tens of thousands of extra API calls just to
-   build a cache, on top of already-observed free-tier rate limiting.
-   Lexical overlap is weaker for zero-word-overlap abbreviations (e.g. an
-   abbreviation with no shared substring with its LOINC name), but stage 1's
-   much larger real alias coverage absorbs most of exactly that case, and
-   stage 3 still supplies clinical judgment on top of whatever stage 2 finds.
-3. LLM re-ranks the candidates using full clinical context (specimen/method)
-   and either confirms one, or says none are reliable -> needs_review /
-   unmapped. This is what prevents "picked the closest string match" errors.
+   high confidence, no model call.
+2. Candidate shortlist from an IN-MEMORY index (app/services/retrieval.py):
+   IDF-weighted token overlap over names + synonyms, with specimen, unit and
+   "commonly ordered" signals. This replaced per-row SQL `ILIKE '%x%'` scans
+   over the whole table, which took seconds per row.
+3. Verification. A clearly-winning candidate is accepted locally
+   (`retrieval_auto`); the remaining ambiguous rows are judged by ONE batched
+   LLM call per page (llm_client.verify_mappings_batch) instead of one call per
+   row, and the LLM may only choose from the supplied candidates. If the LLM is
+   unavailable the row is left needs_review with unverified suggestions - a
+   closest-string match is never auto-assigned without evidence.
+
+`map_rows` is the page-level entry point used by the pipeline (database-free,
+so it can run on worker threads); `map_observation` maps a single row.
 """
 import logging
-import re
 from typing import Optional
 
-from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.loinc import LoincCode, LoincAlias
-from app.services import llm_client
+from app.models.loinc import LoincCode
+from app.services import llm_client, retrieval
 from app.services.normalization import _clean
 
 logger = logging.getLogger(__name__)
 
 TOP_K = 6
-MAX_QUERY_TOKENS = 6
-ROWS_PER_TOKEN = 150
-_UNRANKED = 10**9  # sort value standing in for "no COMMON_TEST_RANK on file"
-
-_WORD_RE = re.compile(r"[a-z0-9]+")
-_STOPWORDS = {"in", "of", "by", "the", "a", "an", "and", "or", "test", "level", "specimen"}
-
-# Ties are broken by this, ascending (lower = more commonly ordered), so a
-# per-token LIMIT keeps the handful of routine tests instead of an arbitrary
-# slice of the (often hundreds of) loosely-related codes sharing a word.
-_RANK_SORT_KEY = case((LoincCode.common_test_rank > 0, LoincCode.common_test_rank), else_=_UNRANKED)
 
 
-def _tokenize(text: str) -> list[str]:
-    words = _WORD_RE.findall(text.lower())
-    return [w for w in words if len(w) > 1 and w not in _STOPWORDS]
+def _top_k_candidates(query_text: str, db: Optional[Session] = None, k: int = TOP_K) -> list[dict]:
+    """Back-compatible text entry point ("name | specimen: X | method"); the
+    work is done by the in-memory index and `db` is no longer used."""
+    parts = [p.strip() for p in query_text.split("|")]
+    name = parts[0] if parts else ""
+    specimen = method = None
+    for extra in parts[1:]:
+        if extra.lower().startswith("specimen:"):
+            specimen = extra.split(":", 1)[1].strip() or None
+        elif extra:
+            method = extra
+    return [h.summary() for h in retrieval.get_index().search(name, specimen=specimen, method=method, k=k)]
 
 
-def _candidate_summary(code: LoincCode) -> dict:
-    return {
-        "loinc_num": code.loinc_num,
-        "long_common_name": code.long_common_name,
-        "component": code.component,
-        "system": code.system,
+def _result(name, code=None, display=None, status="needs_review", conf=None, stage="lexical_llm", why=None, **extra):
+    out = {
+        "normalized_test_name": name,
+        "loinc_code": code,
+        "loinc_display": display,
+        "mapping_status": status,
+        "mapping_confidence": conf,
+        "mapping_stage": stage,
+        "mapping_rationale": why,
     }
+    out.update(extra)
+    return out
 
 
-def _top_k_candidates(query_text: str, db: Session, k: int = TOP_K) -> list[dict]:
-    """Ranks LOINC codes by how many query tokens appear somewhere in their
-    name/component or a known alias -- a simple, dependency-free stand-in for
-    semantic search that scales to the full table without embedding calls.
+def _exact_match(db: Optional[Session], alias_index: dict, original_test_name: str) -> Optional[dict]:
+    exact = alias_index.get(_clean(original_test_name))
+    if not exact:
+        return None
+    rec = retrieval.get_index().get(exact["loinc_num"])
+    display = rec["long_common_name"] if rec else None
+    if display is None and db is not None:
+        row = db.query(LoincCode).filter(LoincCode.loinc_num == exact["loinc_num"]).first()
+        display = row.long_common_name if row else None
+    return _result(
+        exact["canonical_name"], exact["loinc_num"], display, "confirmed", 0.98, "alias_exact",
+        "Exact alias/name match against the official LOINC reference table.",
+    )
 
-    A word like "glucose" alone matches hundreds of specialized-panel codes
-    in the full table, so each token's SQL match is ordered by
-    COMMON_TEST_RANK (most-commonly-ordered first) before the per-token
-    LIMIT is applied -- otherwise the routine test (e.g. plain serum
-    Glucose) can be truncated away entirely in favor of obscure variants
-    that merely happen to sort first."""
-    tokens = _tokenize(query_text)[:MAX_QUERY_TOKENS]
-    if not tokens:
-        return []
 
-    hit_counts: dict[str, int] = {}
-    best_rank: dict[str, int] = {}
-    summaries: dict[str, dict] = {}
+def _unverified_hint(name: str, candidates: list[dict], why: str) -> dict:
+    hints = ", ".join(f"{c['loinc_num']} ({c['long_common_name']})" for c in candidates[:3])
+    return _result(name, stage="lexical_only", why=why + (f" Unverified suggestions: {hints}." if hints else ""))
 
-    def _record_hit(code: LoincCode):
-        hit_counts[code.loinc_num] = hit_counts.get(code.loinc_num, 0) + 1
-        rank = code.common_test_rank if code.common_test_rank > 0 else _UNRANKED
-        best_rank[code.loinc_num] = min(rank, best_rank.get(code.loinc_num, _UNRANKED))
-        summaries.setdefault(code.loinc_num, _candidate_summary(code))
 
-    for token in tokens:
-        like_pattern = f"%{token}%"
+def _clear_winner(hits: list) -> bool:
+    if not hits or settings.mapping_llm_mode != "ambiguous":
+        return False
+    top = hits[0]
+    if top.score < settings.retrieval_accept_score:
+        return False
+    return len(hits) < 2 or (top.score - hits[1].score) >= settings.retrieval_accept_margin * top.score
 
-        for code in (
-            db.query(LoincCode)
-            .filter(
-                LoincCode.long_common_name.ilike(like_pattern)
-                | LoincCode.shortname.ilike(like_pattern)
-                | LoincCode.component.ilike(like_pattern)
-            )
-            .order_by(_RANK_SORT_KEY)
-            .limit(ROWS_PER_TOKEN)
-        ):
-            _record_hit(code)
 
-        for code in (
-            db.query(LoincCode)
-            .join(LoincAlias, LoincAlias.loinc_num == LoincCode.loinc_num)
-            .filter(LoincAlias.alias.ilike(like_pattern))
-            .order_by(_RANK_SORT_KEY)
-            .limit(ROWS_PER_TOKEN)
-        ):
-            _record_hit(code)
+def _apply_verdict(name: str, candidates: list[dict], verdict: dict) -> dict:
+    chosen = verdict.get("chosen_loinc_num")
+    try:
+        confidence = float(verdict.get("confidence") or 0.0)
+    except (TypeError, ValueError):
+        confidence = 0.0
+    rationale = verdict.get("rationale")
+    if not chosen:
+        return _result(name, status="unmapped", conf=confidence, why=rationale or "No candidate judged reliable.")
+    rec = next((c for c in candidates if c["loinc_num"] == chosen), None)
+    if rec is None:
+        return _result(name, conf=confidence, why="Model chose a LOINC code outside the candidate list; discarded.")
+    status = "confirmed" if confidence >= settings.mapping_confidence_threshold else "needs_review"
+    return _result(rec["long_common_name"], rec["loinc_num"], rec["long_common_name"], status, confidence, "lexical_llm", rationale)
 
-    ranked = sorted(hit_counts.keys(), key=lambda num: (-hit_counts[num], best_rank[num]))[:k]
-    return [summaries[loinc_num] for loinc_num in ranked]
+
+def map_rows(tests: list, alias_index: dict[str, dict], use_llm: bool = True) -> list[dict]:
+    """Maps every row of a page at once. Touches no database and makes at most
+    one (batched) LLM request, so it is safe and fast on a worker thread."""
+    index = retrieval.get_index()
+    out: list[Optional[dict]] = [None] * len(tests)
+    pending: list[tuple[int, list[dict]]] = []
+    for i, t in enumerate(tests):
+        exact = _exact_match(None, alias_index, t.original_test_name)
+        if exact:
+            out[i] = exact
+            continue
+        try:
+            hits = index.search(t.original_test_name, specimen=t.specimen, unit=t.unit,
+                                method=t.method, value=t.value, k=TOP_K)
+        except Exception:
+            logger.exception("Candidate search failed")
+            out[i] = _result(t.original_test_name, stage="error", why="Candidate search failed; needs manual review.")
+            continue
+        cands = [h.summary() for h in hits]
+        if not use_llm or settings.mapping_llm_mode == "off":
+            out[i] = _unverified_hint(t.original_test_name, cands,
+                                      "No exact alias match and AI verification was unavailable; needs manual review.")
+        elif _clear_winner(hits):
+            top = hits[0]
+            out[i] = _result(top.long_common_name, top.loinc_num, top.long_common_name, "confirmed", 0.85,
+                             "retrieval_auto", "Clear best match among LOINC candidates (name, specimen and unit agree).")
+        elif not cands:
+            out[i] = _result(t.original_test_name, status="unmapped", conf=0.0,
+                             why="No candidate LOINC concepts found.")
+        else:
+            pending.append((i, cands))
+
+    if pending:
+        items = [
+            {"i": n, "original_name": tests[i].original_test_name, "value": tests[i].value, "unit": tests[i].unit,
+             "specimen": tests[i].specimen, "method": tests[i].method, "candidates": cands}
+            for n, (i, cands) in enumerate(pending)
+        ]
+        try:
+            verdicts = llm_client.verify_mappings_batch(items)
+        except Exception:
+            logger.exception("Batched LLM mapping verification failed")
+            for i, cands in pending:
+                r = _unverified_hint(tests[i].original_test_name, cands,
+                                     "LLM verification call failed; needs manual review.")
+                r["mapping_stage"] = "error"
+                r["llm_failed"] = True
+                out[i] = r
+        else:
+            for (i, cands), verdict in zip(pending, verdicts):
+                out[i] = _apply_verdict(tests[i].original_test_name, cands, verdict or {})
+    return out  # type: ignore[return-value]
 
 
 def map_observation(
@@ -125,22 +169,13 @@ def map_observation(
     timing: Optional[str] = None,
     use_llm: bool = True,
 ) -> dict:
-    """`use_llm=False` skips stage 3 entirely (zero API calls): deterministic
-    alias matches still confirm, everything else is left needs_review with the
-    lexical candidates offered only as unverified hints -- never auto-assigned,
-    since stage 3 is what guards against closest-string-match errors."""
-    exact = alias_index.get(_clean(original_test_name))
+    """Maps a single row (manual "Add row"). `use_llm=False` skips verification
+    entirely (zero API calls): deterministic alias matches still confirm,
+    everything else is left needs_review with the candidates offered only as
+    unverified hints."""
+    exact = _exact_match(db, alias_index, original_test_name)
     if exact:
-        loinc = db.query(LoincCode).filter(LoincCode.loinc_num == exact["loinc_num"]).first()
-        return {
-            "normalized_test_name": exact["canonical_name"],
-            "loinc_code": loinc.loinc_num,
-            "loinc_display": loinc.long_common_name,
-            "mapping_status": "confirmed",
-            "mapping_confidence": 0.98,
-            "mapping_stage": "alias_exact",
-            "mapping_rationale": "Exact alias/name match against the official LOINC reference table.",
-        }
+        return exact
 
     query_text = " | ".join(
         filter(None, [original_test_name, f"specimen: {specimen}" if specimen else None, method])
@@ -149,30 +184,11 @@ def map_observation(
         candidates = _top_k_candidates(query_text, db)
     except Exception:
         logger.exception("Lexical candidate search failed")
-        return {
-            "normalized_test_name": original_test_name,
-            "loinc_code": None,
-            "loinc_display": None,
-            "mapping_status": "needs_review",
-            "mapping_confidence": None,
-            "mapping_stage": "error",
-            "mapping_rationale": "Candidate search failed; needs manual review.",
-        }
+        return _result(original_test_name, stage="error", why="Candidate search failed; needs manual review.")
 
     if not use_llm:
-        hints = ", ".join(f"{c['loinc_num']} ({c['long_common_name']})" for c in candidates[:3])
-        return {
-            "normalized_test_name": original_test_name,
-            "loinc_code": None,
-            "loinc_display": None,
-            "mapping_status": "needs_review",
-            "mapping_confidence": None,
-            "mapping_stage": "lexical_only",
-            "mapping_rationale": (
-                "No exact alias match and AI verification was unavailable; needs manual review."
-                + (f" Unverified suggestions: {hints}." if hints else "")
-            ),
-        }
+        return _unverified_hint(original_test_name, candidates,
+                                "No exact alias match and AI verification was unavailable; needs manual review.")
 
     try:
         verdict = llm_client.verify_mapping(
@@ -187,51 +203,6 @@ def map_observation(
         )
     except Exception:
         logger.exception("LLM mapping verification failed")
-        return {
-            "normalized_test_name": original_test_name,
-            "loinc_code": None,
-            "loinc_display": None,
-            "mapping_status": "needs_review",
-            "mapping_confidence": None,
-            "mapping_stage": "error",
-            "mapping_rationale": "LLM verification call failed; needs manual review.",
-            "llm_failed": True,
-        }
-
-    chosen = verdict.get("chosen_loinc_num")
-    confidence = float(verdict.get("confidence") or 0.0)
-    rationale = verdict.get("rationale")
-
-    if not chosen:
-        return {
-            "normalized_test_name": original_test_name,
-            "loinc_code": None,
-            "loinc_display": None,
-            "mapping_status": "unmapped",
-            "mapping_confidence": confidence,
-            "mapping_stage": "lexical_llm",
-            "mapping_rationale": rationale or "No candidate judged reliable.",
-        }
-
-    chosen_rec = next((c for c in candidates if c["loinc_num"] == chosen), None)
-    if chosen_rec is None:
-        return {
-            "normalized_test_name": original_test_name,
-            "loinc_code": None,
-            "loinc_display": None,
-            "mapping_status": "needs_review",
-            "mapping_confidence": confidence,
-            "mapping_stage": "lexical_llm",
-            "mapping_rationale": "Model chose a LOINC code outside the candidate list; discarded.",
-        }
-
-    status = "confirmed" if confidence >= settings.mapping_confidence_threshold else "needs_review"
-    return {
-        "normalized_test_name": chosen_rec["long_common_name"],
-        "loinc_code": chosen_rec["loinc_num"],
-        "loinc_display": chosen_rec["long_common_name"],
-        "mapping_status": status,
-        "mapping_confidence": confidence,
-        "mapping_stage": "lexical_llm",
-        "mapping_rationale": rationale,
-    }
+        return _result(original_test_name, stage="error", why="LLM verification call failed; needs manual review.",
+                       llm_failed=True)
+    return _apply_verdict(original_test_name, candidates, verdict)

@@ -20,7 +20,9 @@ config = context.config
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers=False: the default (True) silently muted every
+    # application logger (app.*) the moment migrations ran at startup.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # The DB URL is owned by the app's own settings (env vars / .env), not
 # alembic.ini, so local dev and Render both "just work" with whatever
