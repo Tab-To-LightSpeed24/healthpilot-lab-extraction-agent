@@ -26,6 +26,8 @@ class ConfigurationError(RuntimeError):
 
 _calls_made = 0
 _calls_lock = threading.Lock()
+# Caps simultaneous requests process-wide, however many documents are running.
+_llm_slots = threading.BoundedSemaphore(max(1, settings.llm_global_concurrency))
 
 
 def calls_made() -> int:
@@ -42,6 +44,14 @@ def _count_call() -> None:
                 f"LLM call cap reached ({settings.llm_call_cap}); further requests are refused."
             )
         _calls_made += 1
+
+
+def _create(client, **kwargs):
+    """Every outgoing request goes through here: counted against LLM_CALL_CAP and
+    limited to LLM_GLOBAL_CONCURRENCY in flight at once."""
+    _count_call()
+    with _llm_slots:
+        return client.chat.completions.create(**kwargs)
 
 
 class MalformedReply(Exception):
@@ -202,8 +212,7 @@ def extract_page(image_png: bytes, text_layer: Optional[str]) -> PageExtractionR
     elif not text_layer:
         raise ValueError("extract_page called with neither an image nor a text layer")
 
-    _count_call()
-    response = client.chat.completions.create(
+    response = _create(client,
         model=settings.gemini_model,
         messages=[{"role": "user", "content": content}],
         response_format={"type": "json_object"},
@@ -272,8 +281,7 @@ def verify_mapping(
         timing=timing,
         candidates=candidates_str or "(no candidates found)",
     )
-    _count_call()
-    response = client.chat.completions.create(
+    response = _create(client,
         model=settings.gemini_model,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
@@ -323,8 +331,7 @@ def _format_batch_item(it: dict) -> str:
 def _verify_chunk(items: List[dict]) -> List[dict]:
     client = _get_client()
     prompt = BATCH_MAPPING_PROMPT.format(items="\n".join(_format_batch_item(it) for it in items))
-    _count_call()
-    response = client.chat.completions.create(
+    response = _create(client,
         model=settings.gemini_model,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},

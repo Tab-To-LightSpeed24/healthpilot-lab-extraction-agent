@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, String, Integer, DateTime, Enum, JSON, LargeBinary, Text
+from sqlalchemy import event
 from sqlalchemy.orm import relationship
 
 from app.core.db import Base
@@ -58,3 +59,11 @@ class Document(Base):
     observations = relationship(
         "Observation", back_populates="document", cascade="all, delete-orphan"
     )
+
+
+def _clip_filename(mapper, connection, target) -> None:
+    if isinstance(target.filename, str) and len(target.filename) > 512:
+        target.filename = target.filename[:511] + "\u2026"
+
+
+event.listen(Document, "before_insert", _clip_filename)

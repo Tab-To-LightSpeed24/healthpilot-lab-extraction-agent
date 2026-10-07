@@ -291,6 +291,12 @@ thinking short. Measured on a real 12-page, 56-row report: ~12 s end to end (pre
 minutes when pages and rows were processed one after another). `LLM_CALL_CAP` sets a hard
 ceiling on LLM requests per server process (0 = unlimited) for cost-controlled test runs.
 
+Several documents also process **at the same time** (`WORKER_CONCURRENCY`, default 3 on
+Postgres; SQLite always runs one): each worker claims a different pending report, while
+`LLM_GLOBAL_CONCURRENCY` (default 24) caps simultaneous LLM requests across all of them and
+OCR runs stay bounded for memory. Free-text fields are widened and clipped on write so an
+unusually long printed value can never fail a whole page on Postgres.
+
 ### Security hardening
 
 - **Shared API key** (`API_KEY`): when set, every route except `/health` needs an

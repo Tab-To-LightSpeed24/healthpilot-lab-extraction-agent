@@ -63,35 +63,50 @@ def recover_stuck_documents(db: Session) -> int:
 def _claim_next_pending(db: Session) -> str | None:
     """Compare-and-swap claim: only succeeds if the row is still `pending`
     at the moment of the UPDATE, so two workers racing on the same row can't
-    both start processing it."""
-    candidate = (
-        db.query(Document.id)
-        .filter(Document.status == DocumentStatus.pending)
-        .order_by(Document.uploaded_at.asc())
-        .first()
-    )
-    if candidate is None:
-        return None
-    document_id = candidate[0]
-
-    result = (
-        db.query(Document)
-        .filter(Document.id == document_id, Document.status == DocumentStatus.pending)
-        .update(
-            {"status": DocumentStatus.processing, "updated_at": datetime.now(timezone.utc)},
-            synchronize_session=False,
+    both start processing it. A worker that loses the race immediately tries
+    the next pending row instead of going back to sleep."""
+    for _ in range(5):
+        candidate = (
+            db.query(Document.id)
+            .filter(Document.status == DocumentStatus.pending)
+            .order_by(Document.uploaded_at.asc())
+            .first()
         )
-    )
-    db.commit()
-    return document_id if result == 1 else None
+        if candidate is None:
+            return None
+        document_id = candidate[0]
+
+        result = (
+            db.query(Document)
+            .filter(Document.id == document_id, Document.status == DocumentStatus.pending)
+            .update(
+                {"status": DocumentStatus.processing, "updated_at": datetime.now(timezone.utc)},
+                synchronize_session=False,
+            )
+        )
+        db.commit()
+        if result == 1:
+            return document_id
+    return None
 
 
-def worker_loop(stop_event: threading.Event) -> None:
-    logger.info("Worker loop started")
+def effective_concurrency(requested: int, dialect: str) -> int:
+    """SQLite allows one writer at a time, so concurrent document jobs there just
+    collide on locks; only real databases (Postgres) run jobs side by side."""
+    if dialect == "sqlite":
+        return 1
+    return max(1, requested)
+
+
+def worker_loop(stop_event: threading.Event, primary: bool = True) -> None:
+    """One document at a time per loop. Several loops run side by side (see
+    start_worker); the compare-and-swap claim guarantees no two of them take the
+    same row. Only the primary loop runs the periodic stuck-job sweep."""
+    logger.info("Worker loop started (%s)", "primary" if primary else "secondary")
     last_recovery = time.time()
     while not stop_event.is_set():
         now = time.time()
-        if now - last_recovery > 60:
+        if primary and now - last_recovery > 60:
             db = SessionLocal()
             try:
                 recover_stuck_documents(db)
@@ -130,7 +145,14 @@ def start_worker() -> threading.Event:
     finally:
         db.close()
 
+    from app.core.config import settings
+    from app.core.db import engine
+
     stop_event = threading.Event()
-    thread = threading.Thread(target=worker_loop, args=(stop_event,), daemon=True)
-    thread.start()
+    n = effective_concurrency(settings.worker_concurrency, engine.dialect.name)
+    for k in range(n):
+        threading.Thread(
+            target=worker_loop, args=(stop_event, k == 0), name=f"doc-worker-{k}", daemon=True
+        ).start()
+    logger.info("Started %s document worker(s)", n)
     return stop_event

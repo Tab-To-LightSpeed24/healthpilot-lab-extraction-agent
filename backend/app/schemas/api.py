@@ -115,13 +115,13 @@ class ObservationCreateIn(BaseModel):
 
     document_id: str
     original_test_name: str = Field(min_length=1, max_length=512)
-    value: Optional[str] = Field(default=None, max_length=128)
-    unit: Optional[str] = Field(default=None, max_length=64)
-    reference_range: Optional[str] = Field(default=None, max_length=128)
-    specimen: Optional[str] = Field(default=None, max_length=128)
-    method: Optional[str] = Field(default=None, max_length=256)
-    timing: Optional[str] = Field(default=None, max_length=128)
-    flag: Optional[str] = Field(default=None, max_length=32)
+    value: Optional[str] = Field(default=None, max_length=512)
+    unit: Optional[str] = Field(default=None, max_length=128)
+    reference_range: Optional[str] = Field(default=None, max_length=4000)
+    specimen: Optional[str] = Field(default=None, max_length=256)
+    method: Optional[str] = Field(default=None, max_length=512)
+    timing: Optional[str] = Field(default=None, max_length=256)
+    flag: Optional[str] = Field(default=None, max_length=64)
     page_number: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("original_test_name")
@@ -143,13 +143,13 @@ class ObservationUpdateIn(BaseModel):
     (sending null/blank for an optional field clears it)."""
 
     original_test_name: Optional[str] = Field(default=None, min_length=1, max_length=512)
-    value: Optional[str] = Field(default=None, max_length=128)
-    unit: Optional[str] = Field(default=None, max_length=64)
-    reference_range: Optional[str] = Field(default=None, max_length=128)
-    specimen: Optional[str] = Field(default=None, max_length=128)
-    method: Optional[str] = Field(default=None, max_length=256)
-    timing: Optional[str] = Field(default=None, max_length=128)
-    flag: Optional[str] = Field(default=None, max_length=32)
+    value: Optional[str] = Field(default=None, max_length=512)
+    unit: Optional[str] = Field(default=None, max_length=128)
+    reference_range: Optional[str] = Field(default=None, max_length=4000)
+    specimen: Optional[str] = Field(default=None, max_length=256)
+    method: Optional[str] = Field(default=None, max_length=512)
+    timing: Optional[str] = Field(default=None, max_length=256)
+    flag: Optional[str] = Field(default=None, max_length=64)
 
     @field_validator("original_test_name")
     @classmethod

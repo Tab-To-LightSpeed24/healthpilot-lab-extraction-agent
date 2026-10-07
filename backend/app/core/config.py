@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     llm_enabled: bool = True
     # How many pages of one document are sent to the LLM at the same time.
     llm_max_concurrency: int = 12
+    # Process-wide ceiling on simultaneous LLM requests across ALL documents being
+    # processed at once (each document may use up to llm_max_concurrency of these).
+    llm_global_concurrency: int = 24
+    # Documents processed at the same time (worker threads). Forced to 1 on SQLite,
+    # whose single-writer locking makes concurrent jobs fail with "database is locked".
+    worker_concurrency: int = 3
     # Hard ceiling on LLM requests per server process (0 = unlimited). Used to
     # cap spend during manual/real-API test runs; further calls are refused.
     llm_call_cap: int = 0

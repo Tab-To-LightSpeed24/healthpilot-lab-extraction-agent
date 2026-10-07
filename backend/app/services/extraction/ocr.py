@@ -10,6 +10,7 @@ OCR output.
 Per-span confidence is the mean Tesseract word confidence / 100 (digital
 text is 1.0), so downstream stages can see which fragments were shaky.
 """
+import threading
 import os
 import shutil
 from typing import List, Optional
@@ -61,6 +62,11 @@ def configure_tesseract() -> str:
     return cmd
 
 
+# Tesseract on a large page peaks at hundreds of MB; this caps simultaneous runs
+# across ALL documents being processed, not just within one.
+_OCR_SLOTS = threading.BoundedSemaphore(max(1, settings.ocr_max_workers))
+
+
 def ocr_available() -> bool:
     try:
         configure_tesseract()
@@ -77,12 +83,13 @@ def ocr_layout(image: np.ndarray, page_number: int, psm: int = 6) -> PageLayout:
     configure_tesseract()
     height, width = image.shape[:2]
     try:
-        data = pytesseract.image_to_data(
-            image,
-            config=f"--oem 1 --psm {psm}",
-            output_type=pytesseract.Output.DICT,
-            timeout=settings.ocr_page_timeout_seconds,
-        )
+        with _OCR_SLOTS:
+            data = pytesseract.image_to_data(
+                image,
+                config=f"--oem 1 --psm {psm}",
+                output_type=pytesseract.Output.DICT,
+                timeout=settings.ocr_page_timeout_seconds,
+            )
     except RuntimeError as exc:  # pytesseract raises RuntimeError on timeout
         raise OcrUnavailable(f"OCR timed out or failed: {exc}") from exc
 

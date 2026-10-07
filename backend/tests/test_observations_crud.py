@@ -55,7 +55,7 @@ def test_create_trims_and_blank_optional_fields_become_null(client, doc_id, no_l
     ({"original_test_name": "   "}, 422),
     ({"original_test_name": ""}, 422),
     ({"original_test_name": "x" * 513}, 422),
-    ({"value": "v" * 129}, 422),
+    ({"value": "v" * 513}, 422),
     ({"page_number": 0}, 422),
 ])
 def test_create_validation(client, doc_id, no_llm, body, status):
@@ -106,7 +106,7 @@ def test_human_confirmed_mapping_survives_a_value_only_edit(client, doc_id, no_l
     ({}, 400),
     ({"original_test_name": None}, 400),
     ({"original_test_name": "  "}, 422),
-    ({"flag": "f" * 33}, 422),
+    ({"flag": "f" * 65}, 422),
 ])
 def test_update_validation(client, doc_id, no_llm, body, status):
     row = _create(client, doc_id).json()
