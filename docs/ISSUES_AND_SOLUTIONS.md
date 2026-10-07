@@ -7,7 +7,7 @@ the level of "explain this to another developer," not "explain this to
 yourself" — so read it once and you should be able to talk through any of
 these unprompted.
 
-> **Note on naming:** Parts 1-5 describe events from when the extraction model was Gemini, so they refer to `gemini_client`, `GEMINI_API_KEY` and Gemini quotas. That module is now `llm_client.py` (OpenRouter, OpenAI-compatible) and the key is `OPENROUTER_API_KEY`. The accounts are kept as written because they are historically accurate.
+> **Note on naming:** Parts 1-5 describe events from when the extraction model was Gemini, so they refer to `gemini_client`, `GEMINI_API_KEY` and Gemini quotas. That module is now `llm_client.py`, which talks to Gemini through its OpenAI-compatible endpoint, and the key is `GEMINI_API_KEY` (an interim version used OpenRouter, which Part 6 mentions). The accounts are kept as written because they are historically accurate. Part 7 covers the latest work. The committed LOINC CSV now holds ~18k codes; the ~62k figures in earlier parts describe the larger table used at the time.
 
 The overarching theme, if an interviewer asks "what was the hardest part":
 **almost nothing here was found by reading code carefully. Nearly everything
@@ -618,6 +618,71 @@ are undetectable. After a user edit the row is re-validated, so a stale
 
 ---
 
+## Part 7 — From minutes to seconds, and the production failures that followed
+
+Every item here was found by running the real pipeline or reading real production
+errors, not by review.
+
+### 7.1 "5 minutes per document" was two different problems
+**Symptom:** a 12-page report took minutes. **Diagnosis (measured, not guessed):**
+adding a per-stage timing line showed that after making pages parallel the run was
+still ~117 s, of which ~99 s was LOINC matching. Each unmatched test ran up to 12
+`ILIKE '%word%'` scans over a ~495k-row alias table (no index can serve a leading
+wildcard) and then made its own sequential LLM call. **Fix:** an in-memory inverted
+index (~1 ms per lookup) with specimen/unit/commonly-ordered signals, plus ONE batched
+LLM call per page, run inside each page's concurrent task. **Result:** ~12 s for the
+same real document. **Lesson:** the first obvious optimisation (parallel pages) barely
+moved the number; only the timing breakdown showed where the time really was.
+
+### 7.2 Fast, but half the rows came back "error"
+The first fast run had many rows left needs_review. Server logs were completely silent,
+which hid the cause: Alembic's `fileConfig()` (called when migrations run at startup)
+defaults to `disable_existing_loggers=True`, muting every application logger. Fixing
+that immediately showed `JSONDecodeError` from the batch replies: the thinking model
+spent its output budget on reasoning and truncated the JSON. **Fix:** a larger output
+budget, `reasoning_effort="low"` (verified with two tiny real calls: ~468 → 90 tokens),
+a lenient JSON parser, and a retry on a malformed reply. A second bug surfaced at the
+same time: one failed mapping call set "LLM unavailable" and demoted the remaining,
+already-AI-read pages to the local parser; mapping failure now only affects mapping.
+
+### 7.3 A value that was too long for its column — only on Postgres
+**Symptom (deployed app):** `StringDataRightTruncation: value too long for type
+character varying(128)`; the document failed. **Cause:** a real HbA1c row's reference
+range was a ~170-character multi-line interpretation block and `reference_range` was
+`VARCHAR(128)`. SQLite does not enforce lengths, so all tests had passed. **Fix:** widen
+the columns (`reference_range` → `TEXT`), clip any other over-long free text on insert and
+update (a SQLAlchemy event, so every path is covered), match the API input limits, and
+add a regression test using the real failing text. **Lesson:** a test database that is
+more forgiving than production hides a whole class of bugs.
+
+### 7.4 Documents stuck in "processing", and Cancel stuck on "Cancelling"
+**Symptom:** after enabling several documents at once, documents never finished and
+Cancel did nothing. **What the evidence showed:** the log ended 17 s after the first
+claim, so the failure itself wasn't visible. Measuring real process memory showed the
+one-time LOINC lookup builds peaked at 263 MB for one worker and **375 MB when three
+workers hit the cold cache together** — on a 512 MB instance, before any document data.
+A crash/out-of-memory restart leaves documents in "processing" with no worker; cancel
+only set a flag nobody was left to read, and recovery waited 10 minutes. **Fixes:**
+single-flight, compact index builds (cold-start peak 375 → 179 MB), page rendering one
+document at a time, a default of 2 documents at once on the free tier, cancel checked
+every second while waiting on the AI, immediate cancel when the heartbeat is stale, a
+heartbeat while waiting, and orphan recovery 45 s after startup / 3 min otherwise.
+**Verified by reproducing it:** killing the local server mid-document and restarting it
+requeued and finished the document; Cancel on an orphan completed instantly.
+**Honesty note:** the exact production trigger was not captured in the logs provided;
+these fixes address every mechanism found, and the next stall should be diagnosed from
+the logs after the stall (a second "Started server process", or "Killed").
+
+### 7.5 Smaller things worth knowing
+- A hidden browser tab pauses polling by design, so an old tab can show a stale
+  "Cancelling" until you return — I first mistook that for a bug and only the test
+  harness' hidden pane had caused it.
+- Tests that asserted a sequential call order (`call_count == 1`, a mock keyed by call
+  order) had to be rewritten to assert behaviour once pages ran concurrently.
+- Real-API test runs were capped with `LLM_CALL_CAP` so a bug could not overspend.
+- The per-document time ("Processed in N s") is stored as `processing_seconds` from
+  pick-up to finish, so it includes opening/rendering the pages, not just the AI wait.
+
 ## How to talk about this in an interview
 
 **"What was the hardest bug you hit?"** → the Act 1–5 story above. Lead with
@@ -667,3 +732,14 @@ concurrency to 1 because memory, not CPU, was the constraint.
 **"Why not automatically correct the OCR digit errors?"** → a silently edited
 clinical value is worse than a visibly suspect one. The validator suggests
 (`715` → `7.15`) and a human applies it (6.9).
+
+**"How did you get a 12-page report from minutes to seconds?"** → measured instead of
+guessing (7.1): parallel pages alone left ~117 s because per-row SQL scans and
+per-row LLM calls dominated, so matching moved into an in-memory index with one
+batched LLM call per page, giving ~12 s on the same real document.
+
+**"What happened when you turned on parallel documents?"** → documents stuck on a
+512 MB instance; I measured memory (375 MB peak from simultaneous cold builds), fixed
+the builds, made cancel and recovery robust to a dead worker, and reproduced the
+failure locally to prove the fix (7.4). I said plainly that the exact production
+trigger wasn't in the logs I had.

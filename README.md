@@ -4,8 +4,10 @@ Internship project submission for HealthPilot.ai. Extracts laboratory results
 from lab reports (digital PDF, scanned image, plain text), normalizes test
 names, maps each observation to a LOINC code with a confidence/review status,
 stores everything in a structured, traceable data store, and exposes it via
-API + a web UI — including batch upload, mid-job cancellation, a
-human-in-the-loop review action, and full manual correction of results.
+API + a web UI — a side-by-side original-document viewer, a live processing
+console, batch upload, mid-job cancellation, a human-in-the-loop review action,
+and full manual correction of results. A 12-page report is read, coded and
+saved in about 12 seconds.
 
 **The AI model is optional.** If it is disabled, unconfigured, slow, over
 budget, or erroring, the same document is extracted by a fully local pipeline
@@ -16,22 +18,24 @@ to review and edit. No document depends on a paid API to produce output.
 ## Architecture
 
 ```
-  Upload (PDF/PNG/JPG/TXT)  ──►  1. Enqueue: documents row, status=pending (the row IS the queue)
-  single or batch                2. Worker thread: claims one document (compare-and-swap),
-                                    heartbeat + stuck-job recovery, cooperative cancel
-                                 3. pdf_utils: PDF -> text layer + page image; image -> page image;
-                                    text -> text
+  Upload (PDF/DOCX/PNG/JPG/TXT)  ──►  1. Enqueue: documents row, status=pending (the row IS the queue)
+  single or batch                2. Worker threads (WORKER_CONCURRENCY, default 2): each claims a
+                                    different document (compare-and-swap); heartbeat, stuck-job
+                                    recovery, cooperative cancel noticed within ~1 s
+                                 3. pdf_utils: PDF -> text layer + page image; DOCX -> text;
+                                    image -> page image; text -> text
                                             │
                       ┌─────────────────────┴──────────────────────┐
                       ▼                                            ▼
         4a. PRIMARY: LLM extraction                    4b. LOCAL FALLBACK (no API, no key)
         llm_client (Gemini)                        digital PDF  -> layout reconstruction
-        one multimodal call per page                                    -> rule-based field parser
-        25s per request, 45s total budget              plain text   -> field parser
-        incl. retries; first failure that               scanned PDF /  -> preprocessing (rotation,
-        will repeat (timeout, credits, bad              image           deskew, shadow, noise,
-        key, outage) stops LLM attempts for                             sharpen) -> Tesseract OCR
-        the rest of the document                                        (bounded retries) -> parser
+        ALL pages of a document sent                                    -> rule-based field parser
+        concurrently (one call per page,               plain text   -> field parser
+        LLM_MAX_CONCURRENCY); 25s per request,
+        45s total budget incl. retries; first          scanned PDF /  -> preprocessing (rotation,
+        failure that will repeat (timeout,              image           deskew, shadow, noise,
+        credits, bad key, outage) stops LLM                             sharpen) -> Tesseract OCR
+        attempts for the rest of the document                           (bounded retries) -> parser
                       │                                            │
                       │                              5. Validation (local): lost-decimal detection
                       │                                 (suggest, never silently change), garbled
@@ -40,22 +44,28 @@ to review and edit. No document depends on a paid API to produce output.
                       └─────────────────────┬──────────────────────┘
                                             ▼
                       6. normalization + loinc_mapping
-                         stage 1: alias-exact match against the full ~62k-code LOINC table
+                         (runs inside each page's task, no database access)
+                         stage 1: alias-exact match against the ~18k-code LOINC table
                                   + a small human-verified override list (no model)
-                         stage 2: ranked lexical DB search
-                         stage 3: LLM re-rank with specimen context -- SKIPPED in fallback mode
-                                  (left needs_review with unverified suggestions, never guessed)
+                         stage 2: in-memory retrieval index (~1 ms): IDF-weighted names +
+                                  synonyms, specimen / unit / "commonly ordered" signals
+                         stage 3: ONE batched LLM call per page settles the ambiguous rows
+                                  (picks only from supplied candidates) -- SKIPPED in fallback
+                                  mode (left needs_review with unverified suggestions)
                                             ▼
-                      7. Postgres (SQLAlchemy + Alembic): documents -> observations ->
+                      7. Saved on the main thread only (one session; long text fields are
+                         clipped on write so no value can fail a page). Postgres (SQLAlchemy +
+                         Alembic): documents -> observations ->
                          loinc_codes/loinc_aliases; every observation keeps document_id,
                          page_number, extraction_source (llm | fallback | manual), is_edited
                                             ▼
                       8. REST API: /reports, /observations (full CRUD), /loinc, /fhir, /cancel, /review
                                             ▲
                                             │ CORS fetch
-                      Static frontend (HTML/JS/Tailwind CDN): upload (single/batch), report list,
-                      clinical + FHIR views, yellow "lower accuracy" banner, edit / add / delete
-                      rows, one-click "use suggested value", cancel, inline LOINC review
+                      Static frontend (vanilla ES modules, precompiled CSS, dark theme): report
+                      list, side-by-side original viewer + result cards, live processing console,
+                      "Processed in X s" stat, clinical + FHIR views, yellow "lower accuracy"
+                      banner, edit / add / delete rows, "use suggested value", cancel, LOINC review
 ```
 
 ## Key engineering decisions
@@ -105,10 +115,10 @@ edit and delete rows (`/observations` CRUD); editing re-runs validation on the
 corrected row, and a row that now passes is marked fully trusted. No CRUD call
 ever uses an LLM — LOINC mapping for hand edits is alias-exact only.
 
-**The full official LOINC table (~62k Laboratory/ACTIVE codes), not a small
-curated subset.** Downloaded from loinc.org, filtered by
-`scripts/build_loinc_data.py`, and committed as a derived ~26 MB CSV (the raw
-~1 GB release is gitignored). At this scale a bare abbreviation like "Hgb" is
+**A large, real LOINC reference table, not a hand-typed list.** The committed
+`backend/app/data/loinc_lab_active.csv` holds ~18k Laboratory/ACTIVE codes with
+~495k synonyms (derived from the loinc.org release by
+`scripts/build_loinc_data.py`; the raw ~1 GB release is gitignored). At this scale a bare abbreviation like "Hgb" is
 genuinely ambiguous in LOINC's own data, so `normalization.build_alias_index()`
 only auto-resolves unambiguous aliases and a small hand-verified override file
 supplies the extremely common cases — deliberately excluding anything
@@ -116,29 +126,45 @@ specimen-dependent (bare "Glucose"/"Protein"), which must go through
 context-aware mapping so serum vs. urine resolves correctly.
 
 **Three-stage LOINC mapping**, to avoid "superficial text similarity" and flag
-uncertainty rather than guess: (1) deterministic alias-exact match, (2) ranked
-lexical search ordered by LOINC's own `COMMON_TEST_RANK`, (3) LLM re-rank using
-specimen/method context, which can return "no reliable candidate" →
-`unmapped`. In fallback mode stage 3 is skipped: unmatched rows are left
-`needs_review` with unverified suggestions shown as hints, never auto-assigned.
+uncertainty rather than guess: (1) deterministic alias-exact match, (2) an
+in-memory retrieval index (IDF-weighted words over names + synonyms, boosted by
+specimen, unit and LOINC's `COMMON_TEST_RANK`; it replaced per-row SQL `ILIKE`
+scans that took seconds each), (3) one batched LLM call per page that picks
+only from the supplied candidates using specimen/method context, and may return
+"no reliable candidate" → `unmapped`. `MAPPING_LLM_MODE` sets the speed/accuracy
+trade-off: `ambiguous` (default; a clearly winning candidate is accepted
+locally), `all`, or `off`. In fallback mode stage 3 is skipped: unmatched rows
+are left `needs_review` with unverified suggestions shown as hints, never
+auto-assigned.
 
 **Startup seeding is count-checked, not unconditional.** The LOINC tables
-(~62k codes, ~1.7M aliases) are only reseeded when their row counts don't match
+(~18k codes, ~495k aliases) are only reseeded when their row counts don't match
 the CSV, with `TRUNCATE` and 20k-row chunks when they do. Always reseeding made
 a real deploy hang for Render's whole 15-minute startup window (never bound a
 port); a plain restart now takes under a second, while a partially-seeded
 table is still detected and rebuilt.
 
 **A DB-backed durable job queue instead of Celery/RQ + Redis.** The
-`documents.status` row *is* the queue entry; a worker thread claims one at a
-time with a compare-and-swap update, and a heartbeat (`updated_at`) lets a
-startup sweep requeue a job that was mid-`processing` when the process died.
-A broker would add infrastructure and a failure mode for no durability benefit
-at this scale (single instance, low volume).
+`documents.status` row *is* the queue entry; worker threads claim one document
+each with a compare-and-swap update (a worker that loses a race immediately
+takes the next one). A heartbeat (`updated_at`, refreshed every few seconds
+while a job is alive) lets a sweep requeue a job whose process died: 45 s after
+startup, otherwise after 3 minutes. A broker would add infrastructure and a
+failure mode for no durability benefit at this scale (single instance).
+
+**Parallel by design.** Pages of one document are read concurrently and each
+page's LOINC matching runs in the same task; several documents run side by
+side (`WORKER_CONCURRENCY`, forced to 1 on SQLite). Process-wide caps keep it
+safe: `LLM_GLOBAL_CONCURRENCY` for simultaneous provider requests,
+`OCR_MAX_WORKERS` for Tesseract, page rendering one document at a time, and the
+one-time LOINC lookup tables built once and compactly (peak memory matters on
+a 512 MB instance).
 
 **Cooperative mid-job cancellation.** `POST /reports/{id}/cancel` sets a flag
-checked between pages (and, for background OCR, cancels queued pages), so a
-runaway multi-page document can be stopped without killing the process.
+the worker checks every second while waiting on the AI and between pages, so a
+runaway document stops promptly without killing the process. If the worker that
+owned the document is gone (stale heartbeat), the endpoint finishes the
+cancellation itself instead of leaving it on "Cancelling".
 
 **Human-in-the-loop review is a real, validated action.**
 `PATCH /observations/{id}/review` confirms or corrects a mapping; a supplied
@@ -149,8 +175,9 @@ explicitly record "no code applies".
 suit short request/response cycles; this pipeline needs a persistent Postgres
 connection and a long-lived worker thread. The static frontend picks its API
 base from the hostname (localhost → local backend, otherwise the Render URL),
-uses a 45 s fetch timeout, shows a banner if the backend is unreachable, and
-logs failed API calls to the console.
+uses a 45 s fetch timeout, shows a banner (with a Retry button) if the backend
+is unreachable, and cancels stale requests so a slow reply for one report never
+lands on another. Polling pauses while the tab is hidden.
 
 **Alembic migrations, not `create_all()`.** Schema changes are versioned
 migrations (cross-dialect via `batch_alter_table`). A pre-Alembic database with
@@ -160,13 +187,15 @@ tables but no history is stamped at the matching baseline before upgrading.
 
 **No test in this repo claims a result it didn't actually produce.**
 
-- `backend/tests/` has **249 tests, all passing at last run**. They use real PDF
-  generation and parsing, a real SQLite database seeded with the real ~62k-code
-  LOINC table, the real FastAPI app, the real queue/cancel/review/CRUD logic,
+- `backend/tests/` has **343 tests, all passing at last run**. They use real PDF
+  generation and parsing, a real SQLite database seeded with the real LOINC
+  table, the real FastAPI app, the real queue/cancel/review/CRUD logic,
   and — for the scanned path — the **real Tesseract engine** (those tests skip,
   rather than silently pass, on a machine without it).
 - The only mocked boundary is the LLM network call (`llm_client.extract_page` /
-  `verify_mapping`), and every test that does so says so. Time-limit behaviour
+  `verify_mappings_batch` / `verify_mapping`), and every test that does so says
+  so. Concurrency is tested with simulated latency (12 one-second pages finish
+  in under 6 s; two documents overlap; no document is claimed twice). Time-limit behaviour
   is tested for real: the OpenAI client is pointed at a local server that never
   answers in time, and the call is abandoned within the budget.
 - Scan tests use **generated degraded scans with known injected defects** (skew
@@ -187,6 +216,7 @@ set below these):
 | Same degraded scans, **with** preprocessing | 92% |
 | Clean scans (OCR digit misreads such as `130`→`180` remain) | 88% |
 | Real Apollo complex coloured layout, as a scan | 8/12 clean, 5/12 degraded |
+| Real 12-page, 56-row report through the live Gemini pipeline | ~12 s end to end (≈117 s with pages in parallel but per-row matching; minutes originally) |
 | Memory (512 MB Linux container, hard cap, 12 documents incl. 6 large pages) | no OOM kills; anonymous memory plateaus ≈ 293 MB; 126 MB at startup |
 
 Real bugs were found and fixed through failing runs rather than review — see
@@ -207,8 +237,8 @@ uvicorn app.main:app --reload
 ```
 
 Runs on SQLite by default. The schema is created by Alembic migrations and the
-LOINC table seeds on first startup (~62k codes plus ~1.7M aliases; allow
-roughly 30 s the first time — subsequent starts are near-instant). Interactive
+LOINC table seeds on first startup (~18k codes plus ~495k aliases; allow
+a few seconds the first time — subsequent starts are near-instant). Interactive
 API docs at `http://127.0.0.1:8000/docs`.
 
 **OCR needs the Tesseract engine** (the Docker image installs it for you). On
@@ -226,7 +256,13 @@ Key settings (all in `backend/.env.example`):
 | `LLM_ENABLED` | `true` | `false` = never call the LLM; local pipeline only |
 | `LLM_REQUEST_TIMEOUT_SECONDS` / `LLM_PAGE_BUDGET_SECONDS` | `25` / `45` | Per-request cap / total budget incl. retries before diverting to fallback |
 | `OCR_ENABLED`, `TESSERACT_CMD`, `OCR_PAGE_TIMEOUT_SECONDS` | `true`, auto, `40` | Local OCR |
-| `OCR_MAX_WORKERS` | `1` | Background OCR threads. Keep 1 on 512 MB instances: one large-page OCR peaks ≈ 424 MB |
+| `OCR_MAX_WORKERS` | `1` | Background OCR threads (process-wide). Keep 1 on 512 MB instances: one large-page OCR peaks ≈ 424 MB |
+| `LLM_MAX_CONCURRENCY` / `LLM_GLOBAL_CONCURRENCY` | `12` / `24` | Pages of one document sent at once / total simultaneous LLM requests across all documents |
+| `WORKER_CONCURRENCY` | `2` | Documents processed at the same time (Postgres; SQLite always 1) |
+| `MAPPING_LLM_MODE` | `ambiguous` | `ambiguous` / `all` / `off`: how LOINC candidates are verified |
+| `GEMINI_REASONING_EFFORT` | `low` | Model "thinking" level; lower is much faster |
+| `LLM_CALL_CAP` | `0` | Hard ceiling on LLM requests per process (0 = unlimited), for cost-controlled test runs |
+| `API_KEY`, `RATE_LIMIT_PER_MINUTE`, `RATE_LIMIT_UPLOADS_PER_MINUTE` | empty, `240`, `20` | Optional shared key and rate limits (see Security hardening) |
 
 ### Backend tests
 
@@ -275,10 +311,13 @@ alembic revision --autogenerate -m "describe the change"
 alembic upgrade head   # applied automatically at app startup too
 ```
 
-Current head adds extraction provenance (`extraction_source`, `is_edited`,
-`documents.used_fallback`/`fallback_reason`) and validation output
-(`validation_notes`, `suggested_value`), plus the live progress feed
-(`documents.progress`, `documents.pages_done`).
+Migrations add, in order: extraction provenance (`extraction_source`,
+`is_edited`, `documents.used_fallback`/`fallback_reason`), validation output
+(`validation_notes`, `suggested_value`), the live progress feed
+(`documents.progress`, `documents.pages_done`), wider observation text columns
+(`reference_range` is now `TEXT`; a real report's ~170-character range had
+overflowed `VARCHAR(128)` on Postgres), and `documents.processing_seconds`
+(the "Processed in X s" stat).
 
 ### Processing speed
 
@@ -288,7 +327,8 @@ and each page's LOINC matching runs inside that page's task: an **in-memory inde
 call per page** (not per row) settles the ambiguous ones (`MAPPING_LLM_MODE`:
 `ambiguous` default / `all` / `off`). `GEMINI_REASONING_EFFORT=low` keeps the model's
 thinking short. Measured on a real 12-page, 56-row report: ~12 s end to end (previously
-minutes when pages and rows were processed one after another). `LLM_CALL_CAP` sets a hard
+minutes when pages and rows were processed one after another). The UI shows the exact time
+under the document name ("Processed in 9.6 s"), stored per document as `processing_seconds`. `LLM_CALL_CAP` sets a hard
 ceiling on LLM requests per server process (0 = unlimited) for cost-controlled test runs.
 
 Several documents also process **at the same time** (`WORKER_CONCURRENCY`, default 2 on
@@ -308,15 +348,17 @@ unusually long printed value can never fail a whole page on Postgres.
 - **Log redaction**: API keys and bearer tokens are masked before they reach logs.
 - **Prompt-injection guard**: page text is treated as untrusted data in both prompts.
 - Set `CORS_ORIGINS` to your frontend origin in production (default `*`).
+- Free-text columns are widened and clipped on write, so an unusually long printed
+  value can never make Postgres reject a whole page.
 
 ## Deployment
 
 - **Backend**: Render, via `render.yaml` (Blueprint): a free Postgres instance
   plus the API as a Docker web service. Set `GEMINI_API_KEY` in the Render
-  dashboard (`sync: false`, never committed). The image installs Tesseract and
-  sets `MALLOC_ARENA_MAX=2` to limit memory fragmentation. First start after a
-  schema/seed change takes a couple of minutes (LOINC reseed); later starts are
-  fast.
+  dashboard (`sync: false`, never committed); set `API_KEY` too if the API should
+  not be open, and `CORS_ORIGINS` to the frontend origin. The image installs
+  Tesseract and sets `MALLOC_ARENA_MAX=2` to limit memory fragmentation.
+  `WORKER_CONCURRENCY=2` suits the free tier; use 1 if you see memory restarts.
 - **Frontend**: Vercel, project root `frontend/` (static, no build step).
 
 ## API summary
@@ -326,8 +368,8 @@ unusually long printed value can never fail a whole page on Postgres.
 | POST | `/reports` | Upload one report (multipart); enqueues it (`status=pending`) |
 | POST | `/reports/batch` | Upload several at once; all-or-nothing validation |
 | GET | `/reports` | List reports + status (`used_fallback` marks no-AI extractions) |
-| GET | `/reports/{id}` | Detail + observations + computed quality summary |
-| POST | `/reports/{id}/cancel` | Cancel a pending/processing report (cooperative) |
+| GET | `/reports/{id}` | Detail + observations + quality summary + live progress feed + `processing_seconds` |
+| POST | `/reports/{id}/cancel` | Cancel a pending/processing report (cooperative; immediate if the worker is gone) |
 | GET | `/reports/{id}/file` | The original uploaded file (for the side-by-side viewer) |
 | GET | `/reports/{id}/fhir` | The report as an HL7 FHIR R4 `Bundle` |
 | GET | `/observations?document_id=&mapping_status=&q=` | Query observations across reports |
@@ -387,10 +429,18 @@ Each observation includes `extraction_source` (`llm` / `fallback` / `manual`),
   512 MB instance. Memory was verified in a Linux container (no OOM across 12
   documents); the container's reported peak (≈ 490 MB) includes reclaimable
   file cache.
-- The worker is a single in-process thread — correct and durable at this scale,
-  but scaling out would need a real broker (Celery/RQ + Redis).
+- Workers are in-process threads over a database queue — correct and durable at
+  this scale, but scaling across several machines would need a real broker
+  (Celery/RQ + Redis), and the rate limiter is per instance.
+- The speed figure comes from one real 12-page report on a fast machine; Render's
+  free tier has a fraction of a CPU, so expect it to be slower there.
+- The retrieval/LLM mapping trades some accuracy for speed: on the gold set the
+  right code was always in the candidate shortlist, but the final pick depends on
+  the LLM (the set is small; treat the figures as indicative).
 - No LLM escalation for low-confidence local pages yet (it would spend API
   credit; the per-row confidence scores are the intended trigger).
-- Single-tenant, no auth — out of scope per the spec.
+- Single-tenant. Only an optional shared API key (`API_KEY`) protects the API —
+  no per-user accounts, audit log or encryption at rest, so it is not ready for
+  real patient data. Every page sent to Gemini also leaves the system.
 - `eval/` has no genuinely degraded scans of *real* documents; the degraded
   scans in the tests are generated from clean ones.

@@ -15,7 +15,7 @@ scraped from the internet would not.
 | 1 | `01_cbc_clean_digital.pdf` | Digital PDF | Baseline clean CBC panel, standard tabular layout |
 | 2 | `02_cmp_clean_digital.pdf` | Digital PDF | Baseline clean CMP/BMP panel |
 | 3 | `03_lipid_messy_layout.pdf` | Digital PDF | Irregular spacing/dot-leaders, inline reference ranges in parentheses |
-| 4 | `04_synonyms_abbreviations.pdf` | Digital PDF | Non-canonical test names ("Sugar (Fasting)", "SGOT", "SGPT", "A1C", "Na+") to exercise alias + embedding mapping |
+| 4 | `04_synonyms_abbreviations.pdf` | Digital PDF | Non-canonical test names ("Sugar (Fasting)", "SGOT", "SGPT", "A1C", "Na+") to exercise alias + retrieval mapping |
 | 5 | `05_thyroid_partial_fields.pdf` | Digital PDF | Missing unit/reference range on some rows; one purely qualitative result ("Normal") |
 | 6 | `06_urinalysis.pdf` | Digital PDF | Specimen-context-dependent mapping (urine vs serum Glucose/Protein must resolve to different LOINC codes) |
 | 7 | `07_multipage_panel.pdf` | Digital PDF (2 pages) | Page-level source traceability across a multi-page document |
@@ -36,7 +36,7 @@ scanned reports or photographs of printed reports.
 
 ## Running the evaluation
 
-Requires a running backend with `OPENROUTER_API_KEY` set (real API calls that spend real credit, no mocking):
+Requires a running backend with `GEMINI_API_KEY` set (real API calls that spend real credit, no mocking; set `LLM_CALL_CAP` on the server to bound the spend):
 
 ```bash
 pip install -r eval/requirements.txt

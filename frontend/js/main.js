@@ -18,7 +18,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   body: document.body, stats: $("stats"), netBar: $("netBar"),
   repList: $("repList"), repCount: $("repCount"), repSearch: $("repSearch"), repFilter: $("repFilter"),
-  welcome: $("welcome"), wsContent: $("wsContent"), wsIco: $("wsIco"), wsTitle: $("wsTitle"), wsSub: $("wsSub"),
+  welcome: $("welcome"), wsContent: $("wsContent"), wsIco: $("wsIco"), wsTitle: $("wsTitle"), wsSub: $("wsSub"), wsTime: $("wsTime"),
   wsStatus: $("wsStatus"), wsActions: $("wsActions"), banners: $("banners"), paneSwitch: $("paneSwitch"),
   split: $("split"), splitter: $("splitter"), viewerBar: $("viewerBar"), viewerBody: $("viewerBody"),
   tabs: $("tabs"), cntResults: $("cntResults"), resBody: $("resBody"), resView: $("resView"), liveHost: $("liveHost"),
@@ -78,6 +78,12 @@ function statusChip(doc) {
     case "cancelled": return `<span class="chip muted">Cancelled</span>`;
     default: return `<span class="chip muted">${esc(doc.status)}</span>`;
   }
+}
+function fmtDuration(s) {
+  if (s < 10) return `${s.toFixed(1)} s`;
+  if (s < 60) return `${Math.round(s)} s`;
+  const m = Math.floor(s / 60), r = Math.round(s - m * 60);
+  return r === 60 ? `${m + 1} min` : `${m} min ${String(r).padStart(2, "0")} s`;
 }
 const num = (v) => (v === null || v === undefined || v === "" ? null : v);
 const norm = (v) => (v === null || v === undefined ? "" : String(v).trim());
@@ -318,18 +324,23 @@ function renderWorkspace() {
   if (!id) { renderWelcome(); return; }
   const meta = state.detail || state.reports.find((r) => r.id === id);
   if (!meta) {
-    els.wsTitle.textContent = "Loading…"; els.wsSub.textContent = ""; els.wsStatus.innerHTML = ""; els.wsActions.innerHTML = "";
+    els.wsTitle.textContent = "Loading…"; els.wsSub.textContent = ""; els.wsTime.hidden = true; els.wsStatus.innerHTML = ""; els.wsActions.innerHTML = "";
     renderBanners(); renderResults();
     return;
   }
   document.title = `${meta.filename} — HealthPilot`;
   const [cls, ic] = kindIcon(meta);
-  const hSig = [meta.filename, meta.status, meta.num_pages, meta.uploaded_at, meta.cancel_requested].join("|");
+  const hSig = [meta.filename, meta.status, meta.num_pages, meta.uploaded_at, meta.cancel_requested, meta.processing_seconds].join("|");
   if (els.wsContent.dataset.hsig !== hSig) {
     els.wsContent.dataset.hsig = hSig;
     els.wsIco.innerHTML = `<span class="ico ${cls}">${icon(ic)}</span>`;
     els.wsTitle.textContent = meta.filename;
     els.wsTitle.title = meta.filename;
+    const took = meta.processing_seconds;
+    const timed = took != null && (meta.status === "complete" || meta.status === "failed");
+    els.wsTime.hidden = !timed;
+    els.wsTime.classList.toggle("bad", meta.status === "failed");
+    els.wsTime.innerHTML = timed ? `${icon("clock")}${meta.status === "failed" ? "Stopped after" : "Processed in"} ${fmtDuration(took)}` : "";
     els.wsSub.textContent = [meta.num_pages ? `${meta.num_pages} page${meta.num_pages === 1 ? "" : "s"}` : null, `uploaded ${fmtDateTime(meta.uploaded_at)}`].filter(Boolean).join(" · ");
     els.wsStatus.innerHTML = statusChip(meta);
     const cancelling = meta.cancel_requested && meta.status === "processing";

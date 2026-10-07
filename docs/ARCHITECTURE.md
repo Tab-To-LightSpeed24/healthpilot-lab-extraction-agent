@@ -4,7 +4,7 @@ Personal study notes: what I built, why, what broke, and how I'd talk about
 it in an interview. Written to actually understand the system, not just
 recite it.
 
-> **Note on naming:** Parts 1-5 describe events from when the extraction model was Gemini, so they refer to `gemini_client`, `GEMINI_API_KEY` and Gemini quotas. That module is now `llm_client.py` (OpenRouter, OpenAI-compatible) and the key is `OPENROUTER_API_KEY`. The accounts are kept as written because they are historically accurate.
+> **Note on naming:** Parts 1-5 describe events from when the extraction model was Gemini, so they refer to `gemini_client`, `GEMINI_API_KEY` and Gemini quotas. That module is now `llm_client.py`, which talks to Gemini through its OpenAI-compatible endpoint, and the key is `GEMINI_API_KEY` (the model is `GEMINI_MODEL`). The accounts are kept as written because they are historically accurate. Parts 1-8 describe the first build; **§9 describes the current version** (parallel processing, in-memory retrieval, hardening). The committed LOINC CSV now holds ~18k codes (the ~62k figures below are from an earlier, larger table).
 
 ---
 
@@ -34,8 +34,8 @@ guess a wrong code; uncertain mappings must be flagged for human review.
    → normalization/alias matching → mapping pipeline → FastAPI routes. Wrote
    real tests at each stage before moving to the next (see §6 — this
    surfaced several real bugs early, cheaply).
-4. **Frontend**: plain HTML/JS/Tailwind, no build step, talks to the API via
-   `fetch`. Deliberately not React — there was no complexity in this UI that
+4. **Frontend**: plain HTML/JS, no build step (since rewritten as ES modules
+   with precompiled CSS), talks to the API via `fetch`. Deliberately not React — there was no complexity in this UI that
    justified a framework, and it removes an entire toolchain (npm/build/
    bundler) from the deployment risk surface given the deadline.
 5. **Evaluation dataset**: wrote a generator script that produces real PDFs/
@@ -61,8 +61,8 @@ worker thread claims it (compare-and-swap), heartbeat, cancel checked per page
    v
 pdf_utils.load_pages()      PDF -> text layer + page image; image -> image; text -> text
    |
-   +--> PRIMARY   llm_client.extract_page()   OpenRouter, 1 multimodal call per page
-   |                25s/request, 45s total budget; a failure that will repeat
+   +--> PRIMARY   llm_client.extract_page()   Gemini, 1 multimodal call per page, all pages
+   |                of a document concurrently; 25s/request, 45s budget; a failure that will repeat
    |                (timeout, credits, key, outage) stops LLM use for the document
    |
    +--> FALLBACK  extraction/fallback.py      no API, no key
@@ -72,8 +72,8 @@ pdf_utils.load_pages()      PDF -> text layer + page image; image -> image; text
                   -> validation.py  (lost decimals, garbled units, junk rows, confidence)
    |
    v
-normalization + loinc_mapping    stage 1 alias-exact, stage 2 lexical DB search,
-                                 stage 3 LLM re-rank (skipped in fallback mode)
+normalization + loinc_mapping    stage 1 alias-exact, stage 2 in-memory retrieval index,
+                                 stage 3 one batched LLM call per page (skipped in fallback mode)
    |
    v
 Postgres (SQLAlchemy + Alembic)  documents -> observations -> loinc_codes
@@ -105,7 +105,8 @@ say "I'm not sure" reliably. Splitting it:
 - **Stage 1 (alias exact-match)** handles the common, unambiguous cases
   deterministically and for free — no model call, no chance of a *wrong*
   answer for something we already know for certain (e.g. "Hgb" → Hemoglobin).
-- **Stage 2 (embedding search)** narrows a huge terminology space to a
+- **Stage 2 (candidate retrieval; originally lexical SQL, now an in-memory index)**
+  narrows a huge terminology space to a
   short, relevant candidate list instead of asking the LLM to pick from
   everything.
 - **Stage 3 (LLM re-rank with context)** is where specimen/method context
@@ -247,7 +248,7 @@ actually correct."
 ## 6. Testing philosophy
 
 No test in this repo claims a result it didn't actually produce.
-- `backend/tests/` (29 tests) exercise real code: real PDFs generated and
+- `backend/tests/` (343 tests at the latest run; 29 in the first build) exercise real code: real PDFs generated and
   parsed via PyMuPDF, a real SQLite DB, the real FastAPI app via
   `TestClient`, and the real 3-stage mapping control flow. The *only* thing
   mocked is the actual Gemini network call (one clearly-named boundary),
@@ -295,9 +296,11 @@ one-shot build.
 - Handwriting is out of scope.
 - OCR concurrency is 1 on purpose: memory (a large-page OCR peaks ~424 MB of a
   512 MB instance) is the constraint, verified in a Linux container.
-- Single in-process worker thread (a real broker would be needed to scale out).
+- In-process worker threads over a database queue (a real broker would be needed
+  to scale across machines).
 - No LLM escalation for low-confidence local pages yet (it spends API credit).
-- Single-tenant, no auth - out of scope per the spec.
+- Single-tenant; only an optional shared API key protects the API (no accounts,
+  audit log or encryption at rest).
 - Original file stored as a DB blob, not object storage.
 
 ## 8. Questions I'd expect, and how I'd answer
@@ -329,3 +332,51 @@ document; the rest is extracted locally and clearly flagged. Setting
 architecture diagram in §3, end to end, naming the actual function at each
 step (`load_pages` → `extract_page` or the `FallbackExtractor` → `validate_tests` →
 `map_observation` → `Observation` row → API response).
+
+## 9. Current version: speed, reliability and hardening (latest work)
+
+**Why it changed.** A real 12-page report took minutes: pages were processed one
+after another, every unmatched test ran slow SQL `ILIKE '%word%'` scans over the
+alias table and then its own LLM call. The target was seconds, accepting a small
+accuracy trade-off.
+
+**What was done, in the order it was measured:**
+1. *Pages in parallel* (`pipeline.py`): all pages are sent to Gemini at once
+   (`LLM_MAX_CONCURRENCY`); only the main thread touches the database. Measured on a
+   real 12-page document: still ~117 s, because LOINC matching was ~99 s of it.
+2. *Fast matching* (`retrieval.py`, `loinc_mapping.py`): an in-memory inverted index
+   (~1 ms per lookup) replaces the SQL scans, and ONE batched LLM call per page
+   replaces one call per row. Matching runs inside each page's task. Measured:
+   **~12 s** for the same document.
+3. *Tuning from real runs*: batch replies were truncated JSON because the thinking
+   model ran out of output budget, so the budget was raised,
+   `GEMINI_REASONING_EFFORT=low` set, and the parser made lenient with a retry.
+   An Alembic `fileConfig` call was silently disabling every application logger at
+   startup (fixed with `disable_existing_loggers=False`), which had hidden the real
+   error.
+
+**Reliability fixes from production use:**
+- A multi-line reference range (~170 chars) overflowed `VARCHAR(128)` on Postgres and
+  failed a whole page (SQLite doesn't enforce lengths, so tests had passed). Columns
+  were widened (`reference_range` → `TEXT`), over-long free text is clipped on write,
+  and API input limits follow.
+- Documents could stick in "processing"/"Cancelling" if the process died. Cancel is now
+  checked every second while waiting on the AI; a document whose worker is gone is
+  cancelled immediately; orphaned jobs are requeued after a restart (45 s) or by a
+  periodic sweep (3 min), using a heartbeat refreshed every few seconds.
+- Several documents run at once (`WORKER_CONCURRENCY`), bounded by global caps on LLM
+  requests and OCR, one-document-at-a-time page rendering, and single-flight, compact
+  builds of the LOINC lookup tables (cold-start peak memory 375 MB → 179 MB measured).
+
+**Hardening** (`app/core/security.py`): optional shared API key, per-client rate limits,
+security headers, request ids, log redaction and a prompt-injection guard — a stopgap
+until real per-user auth.
+
+**Observability for users:** the live console streams the progress feed while a
+document processes; when it ends, the header shows "Processed in X s"
+(`documents.processing_seconds`).
+
+**Honest limits:** the 12 s figure is from one real report on a fast machine; the
+Render free tier is far slower per CPU. Accuracy under the faster mapping is only
+indicatively measured (gold set of 40 rows: all 30 alias rows correct; for the other
+10 the right code was always among the 6 candidates sent to the LLM).

@@ -79,6 +79,7 @@ def process_document(document_id: str, db: Session | None = None) -> None:
     owns_session = db is None
     db = db or SessionLocal()
     fallback = None
+    job_started = time.monotonic()      # whole job, including opening/rendering the pages
     try:
         doc = db.query(Document).filter(Document.id == document_id).first()
         if doc is None:
@@ -88,6 +89,7 @@ def process_document(document_id: str, db: Session | None = None) -> None:
         doc.status = DocumentStatus.processing
         doc.progress = []
         doc.pages_done = 0
+        doc.processing_seconds = None
         _progress(db, doc, "Picked up from the queue")
 
         with _RENDER_LOCK:
@@ -376,11 +378,12 @@ def process_document(document_id: str, db: Session | None = None) -> None:
                 else f"One or more pages failed extraction; results may be incomplete. {reason_summary}"
             )
         doc.pages_done = len(pages)
+        doc.processing_seconds = round(time.monotonic() - job_started, 1)
         total_rows = len(doc.observations)
         if doc.status == DocumentStatus.failed:
             _progress(db, doc, "Finished without any extracted results", "error")
         else:
-            total_secs = time.monotonic() - doc_started
+            total_secs = doc.processing_seconds
             _progress(
                 db, doc,
                 f"Finished in {total_secs:.1f}s - {total_rows} observation(s) extracted"
@@ -400,6 +403,7 @@ def process_document(document_id: str, db: Session | None = None) -> None:
         if doc:
             doc.status = DocumentStatus.failed
             doc.error_message = str(exc)
+            doc.processing_seconds = round(time.monotonic() - job_started, 1)
             _progress(db, doc, f"Failed: {_short(str(exc))}", "error")
     finally:
         if "llm_stop" in locals():

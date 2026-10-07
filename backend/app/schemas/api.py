@@ -47,6 +47,7 @@ class DocumentOut(BaseModel):
     fallback_reason: Optional[str] = None
     pages_done: int = 0
     current_step: Optional[str] = None
+    processing_seconds: Optional[float] = None
 
 
 class QualitySummary(BaseModel):

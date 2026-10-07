@@ -38,6 +38,7 @@ const PATHS = {
   activity: "M22 12h-4l-3 9L9 3l-3 9H2",
   code: "m16 18 6-6-6-6 M8 6l-6 6 6 6",
   list: "M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01",
+  clock: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 7v5l3 2",
 };
 
 export function icon(name, cls = "") {

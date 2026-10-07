@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, String, Integer, DateTime, Enum, JSON, LargeBinary, Text
+from sqlalchemy import Boolean, Column, Float, String, Integer, DateTime, Enum, JSON, LargeBinary, Text
 from sqlalchemy import event
 from sqlalchemy.orm import relationship
 
@@ -48,6 +48,9 @@ class Document(Base):
     # progress bar.
     progress = Column(JSON, nullable=True)
     pages_done = Column(Integer, nullable=False, default=0, server_default="0")
+    # Wall-clock seconds from pick-up to finish (includes opening/rendering the pages);
+    # shown under the document name once processing has ended.
+    processing_seconds = Column(Float, nullable=True)
 
     @property
     def current_step(self):

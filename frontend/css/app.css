@@ -227,6 +227,9 @@ kbd { font: 600 10px var(--mono); padding: 2px 6px; border-radius: 6px; border: 
 .ws-head { display: flex; align-items: center; gap: 12px; min-width: 0; flex-wrap: wrap; }
 .ws-head .title { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1 1 260px; }
 .ws-head h1 { margin: 0; font-size: 17px; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.proc-time { display: inline-flex; align-items: center; gap: 5px; margin-top: 2px; font-size: 11.5px; font-weight: 700; color: var(--brand-700); text-shadow: 0 0 12px rgb(var(--glow) / .55); font-variant-numeric: tabular-nums; }
+.proc-time svg { width: 12px; height: 12px; }
+.proc-time.bad { color: var(--rose); text-shadow: none; }
 .ws-head .sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ws-head .title > div { min-width: 0; }
 .ws-actions { display: flex; align-items: center; gap: 8px; flex: none; flex-wrap: wrap; }

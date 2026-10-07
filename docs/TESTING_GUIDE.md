@@ -12,9 +12,10 @@ Sample reports to upload are in `eval/sample_reports/` in this repo
 
 Open the frontend URL. There is nothing to configure: the page picks the
 backend automatically (localhost -> local backend, otherwise the Render URL).
-If the backend is unreachable you will see an amber "Backend unreachable"
-banner and a red message in the Reports card (never an endless "Loading...");
-details are in the browser console (`[api]` / `[health]` lines).
+If the backend is unreachable you will see an amber "Can't reach the server"
+bar with a **Retry now** button (it also retries by itself). If the server has
+an `API_KEY` set, the page asks for it once. Details are in the browser
+console (`[api]` lines).
 
 Render's free tier spins down after ~15 min idle — the first request after
 a period of inactivity can take 30-60s to wake up. If the reports list shows
@@ -22,17 +23,20 @@ a period of inactivity can take 30-60s to wake up. If the reports list shows
 
 ## 2. Smoke test (no upload, ~30 seconds)
 
-In the **LOINC Terminology Search** box, type `glucose`. You should see two
-results (serum and urine Glucose, different LOINC codes) — confirms the
-backend, database, and CORS are all wired correctly end-to-end.
+Click **LOINC lookup** (or press Ctrl+K) and type `glucose`. You should see
+serum and urine Glucose with different LOINC codes — confirms the backend,
+database, and CORS are all wired correctly end-to-end.
 
 ## 3. Golden-path test
 
 Upload `eval/sample_reports/01_cbc_clean_digital.pdf` (a clean CBC panel).
-Expected: status flips `pending → processing → complete` within ~10-20s, and
-the observation table fills in with 5 rows (WBC, RBC, Hemoglobin, Hematocrit,
-Platelet Count), each with a green **confirmed** badge and a real LOINC code
-(e.g. Hemoglobin → `718-7`).
+Expected: the report appears in the list, a dark **live console** streams what
+is happening (queued → opening → extracting → matching) and disappears when
+done, then the original document shows on the left with 5 result cards on the
+right (WBC, RBC, Hemoglobin, Hematocrit, Platelet Count), each with a green
+**confirmed** badge and a real LOINC code (e.g. Hemoglobin → `718-7`). Under
+the document name you should see **"Processed in N s"** (typically a few
+seconds with the AI on).
 
 ## 4. Edge-case tests (what to look for)
 
@@ -42,7 +46,7 @@ Platelet Count), each with a green **confirmed** badge and a real LOINC code
 | `04_synonyms_abbreviations.pdf` | Abbreviations like "SGOT"/"SGPT"/"A1C" still map to the right LOINC codes |
 | `05_thyroid_partial_fields.pdf` | "Free T4 = Normal" (no unit/range) still gets extracted, not dropped |
 | `06_urinalysis.pdf` | Confirms specimen-aware mapping — urine Glucose must NOT map to the serum Glucose LOINC code |
-| `07_multipage_panel.pdf` | Each observation's **Page** column correctly shows 1 or 2 depending on which page it came from |
+| `07_multipage_panel.pdf` | Each card's **p.1 / p.2** chip is correct, and clicking it jumps the viewer to that page |
 | `08_unmapped_novel_test.pdf` | The "Interleukin-6 (IL-6)" row should show a yellow **needs review** or red **unmapped** badge — NOT a confidently-confirmed made-up LOINC code. This is the most important one: it's the test for "never fabricate a mapping." |
 | `09_coag_scanned_image.png` | A PNG image (simulated scan, no text layer) — with the AI on, confirms the vision path; with it off, the local OCR path |
 | `10_plain_text_report.txt` | Plain `.txt` upload — confirms non-PDF/image formats are accepted |
@@ -52,7 +56,7 @@ Platelet Count), each with a green **confirmed** badge and a real LOINC code
 The AI is optional. If it is unavailable, slow, or out of credit, documents
 are extracted locally and flagged. To test this deliberately without spending
 API credit, run the backend with `LLM_ENABLED=false` (or an empty
-`OPENROUTER_API_KEY`) and upload any of the sample reports.
+`GEMINI_API_KEY`) and upload any of the sample reports.
 
 Expected:
 - A yellow **Lower accuracy** banner on the report, a yellow **no AI** tag in
@@ -78,10 +82,27 @@ the list. Renaming a test re-derives its LOINC code; editing a value re-checks
 it. Expect rows you fixed to lose the yellow tint and show an **edited** badge,
 and rows you add to show **added by you**. None of this ever calls the AI.
 
+## 5b. Speed, concurrency and cancel
+
+- **Multi-page speed:** upload a many-page PDF (e.g. combine the sample reports into
+  12 pages). With the AI on, all pages are read at once; the finished document shows
+  "Processed in N s" (about 12 s measured for a 12-page report on a fast machine; the
+  free Render tier is slower).
+- **Several documents:** upload 2-3 at once (drag several files into Upload). On
+  Postgres they process side by side (`WORKER_CONCURRENCY`, default 2); each has its
+  own live console and Cancel button.
+- **Cancel:** click **Cancel** on a queued or processing report. A queued one cancels
+  instantly; a processing one within about a second (even while waiting on the AI).
+  If a server restart left a report stuck in "processing", Cancel finishes it
+  immediately, and restarted servers requeue such reports automatically.
+- **Retry buttons:** stop the backend and watch the amber bar appear — **Retry now**
+  re-checks; opening a report that can't load shows a red banner with **Retry**.
+  Both recover on their own once the server is back.
+
 ## 6. What "success" looks like overall
 
-- Every uploaded report reaches `complete` (or `failed` with a clear
-  `error_message` if something genuinely went wrong — never silently stuck).
+- Every uploaded report reaches `complete`, `failed` with a clear `error_message`,
+  or `cancelled` — never silently stuck (a stuck one is requeued after a restart).
 - Every returned observation has a `mapping_status` badge — confirmed
   (green), needs_review (yellow), or unmapped (red) — never left blank.
 - Clicking a low-confidence badge shows a rationale (hover tooltip) instead
